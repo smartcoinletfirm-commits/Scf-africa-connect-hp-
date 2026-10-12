@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07140d">
+  <title>SCF Africa Connect</title>
+  <meta name="description" content="SCF Africa Connect — Connect, Grow, Learn and Earn">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">S</span>
+      <div><strong>SCF Africa Connect</strong><small>Smart Coinlet Firm</small></div>
+    </div>
+    <div class="live"><span class="pulse"></span> SCF LIVE SIGNAL <b>LIVE</b></div>
+    <div class="community">SCF Community<strong id="communityCount">18,426</strong></div>
+  </header>
+
+  <main class="container">
+    <div id="notice" class="notice hidden" role="status"></div>
+
+    <section id="authView" class="auth-layout">
+      <div class="hero">
+        <p class="eyebrow">CONNECT · GROW · LEARN · EARN</p>
+        <h1>Build your next chapter <span>with your community.</span></h1>
+        <p class="muted">Learn, complete tasks, grow your network and celebrate real milestones with your SCF Circle.</p>
+        <div class="features">
+          <span>✓ Personal referral link</span>
+          <span>✓ Milestone notifications</span>
+          <span>✓ Member-first support</span>
+        </div>
+        <div class="hero-card"><div class="orbit">SCF</div><div><strong>Grow together.</strong><p>Your progress, your circle, your journey.</p></div></div>
+      </div>
+
+      <div class="auth-card">
+        <div class="tabs">
+          <button class="tab active" data-mode="signup" type="button">Create account</button>
+          <button class="tab" data-mode="login" type="button">Log in</button>
+        </div>
+
+        <form id="signupForm" class="form">
+          <label>Full name<input name="full_name" autocomplete="name" required maxlength="100" placeholder="Your full name"></label>
+          <label>Email address<input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+          <label>Phone number<input name="phone" type="tel" autocomplete="tel" required maxlength="20" placeholder="+254..."></label>
+          <label>Education level
+            <select name="education_level" required>
+              <option value="">Choose education level</option>
+              <option>Primary</option><option>Secondary</option><option>College</option><option>University</option><option>Other</option>
+            </select>
+          </label>
+          <label>Country
+            <select name="country" required>
+              <option>Kenya</option><option>Uganda</option><option>Tanzania</option><option>Ghana</option><option>Nigeria</option><option>Other</option>
+            </select>
+          </label>
+          <label>Referral code (optional)<input name="referral_code" maxlength="32" placeholder="Friend's code"></label>
+          <label>Password<input name="password" type="password" minlength="8" autocomplete="new-password" required placeholder="At least 8 characters"></label>
+          <label class="check"><input name="age_confirmed" type="checkbox" required><span>I confirm that I am 18 years old or above.</span></label>
+          <button class="primary full" type="submit">Create account →</button>
+          <p class="small">If email confirmation is enabled in Supabase, confirm your email before logging in.</p>
+        </form>
+
+        <form id="loginForm" class="form hidden">
+          <label>Email address<input name="email" type="email" autocomplete="email" required></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary full" type="submit">Log in →</button>
+          <button class="text-button" id="resetPassword" type="button">Forgot password?</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="activationView" class="status-layout hidden">
+      <div class="status-card">
+        <div class="scene"><span class="sun"></span><span class="cloud">☁</span><span class="person">☻</span><span class="mug">☕</span></div>
+        <p class="eyebrow">YOUR NEXT STEP</p>
+        <h1>Activate your account</h1>
+        <p class="muted">Choose your country and level to view the payment link. After paying, submit your reference for review.</p>
+        <div class="two-col">
+          <label>Country<select id="payCountry"><option>Kenya</option><option>Uganda</option><option>Tanzania</option><option>Ghana</option><option>Nigeria</option></select></label>
+          <label>Level<select id="payLevel"><option value="1">Level 1</option><option value="2">Level 2</option><option value="3">Level 3</option><option value="4">Level 4</option></select></label>
+        </div>
+        <div id="payLinkArea" class="pay-link-area"></div>
+        <form id="proofForm" class="form">
+          <label>Payment reference<input name="reference" maxlength="120" required placeholder="Reference from your receipt"></label>
+          <button class="primary full" type="submit">Submit for review</button>
+        </form>
+        <p class="small">Submitting a reference does not automatically approve your account.</p>
+        <button id="checkStatus" class="secondary full" type="button">Refresh my status</button>
+        <button id="logoutActivation" class="text-button" type="button">Log out</button>
+      </div>
+    </section>
+
+    <section id="pendingView" class="status-layout hidden">
+      <div class="status-card">
+        <div class="waiting-scene"><div class="spinner"></div><span class="waiting-person">☻</span><span class="spark">✦</span></div>
+        <p class="eyebrow">WE'RE REVIEWING YOUR SUBMISSION</p>
+        <h1>You're in the review queue</h1>
+        <p class="muted">Reviews may take approximately 6–12 hours. Please relax while an administrator checks your details.</p>
+        <div class="review-status"><span class="pulse"></span><span id="pendingLabel">Pending approval</span></div>
+        <p class="small">If your review is delayed, contact <a href="mailto:smartcoin@gmail.com">smartcoin@gmail.com</a>. Expiry of a waiting period never automatically approves an account.</p>
+        <button id="checkPending" class="primary full" type="button">Check status</button>
+        <button id="logoutPending" class="text-button" type="button">Log out</button>
+      </div>
+    </section>
+
+    <section id="dashboardView" class="dashboard hidden">
+      <div class="dash-head">
+        <div><p class="eyebrow">MEMBER WORKSPACE</p><h1>Welcome back, <span id="memberName">member</span> 👋</h1><p class="muted">Your progress starts with one useful step today.</p></div>
+        <button class="secondary" id="dashLogout" type="button">Log out</button>
+      </div>
+      <div class="metrics">
+        <article class="metric"><span>Account status</span><strong id="dashStatus">Approved</strong><small>Your account status</small></article>
+        <article class="metric"><span>Referral code</span><strong id="refCode">—</strong><button class="text-button" id="copyReferral" type="button">Copy invite link</button></article>
+        <article class="metric"><span>Referral progress</span><strong id="refCount">0 invites</strong><small>Rewards require verified eligibility.</small></article>
+      </div>
+      <div class="dash-columns">
+        <article class="panel"><h2>Your SCF Circle ✦</h2><p class="muted">Celebrate real milestones with your referral circle.</p><div id="circleFeed" class="feed">Your circle updates will appear here when verified milestones are available.</div></article>
+        <article class="panel"><h2>Quick actions</h2><button class="action" id="shareInvite" type="button">↗ <span><strong>Invite a friend</strong><small>Share your personal referral link</small></span></button><button class="action" id="showSupport" type="button">✉ <span><strong>Contact support</strong><small>Get help with your account</small></span></button></article>
+      </div>
+      <p class="small">Wallets, tasks, notifications, referral rewards and withdrawals must be connected and tested before use.</p>
+    </section>
+
+    <footer><span>© <span id="year"></span> SCF Africa Connect</span><span>Connect · Grow · Learn · Earn</span><a href="mailto:smartcoin@gmail.com">Support</a></footer>
+  </main>
+</body>
+            </html>
