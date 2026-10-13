@@ -1,8 +1,15 @@
+/* =========================================================
+   SCF AFRICA CONNECT | SMART COINLET FIRM
+   Authentication • Activation • Dashboard • Wallet • Tasks
+   Supabase-powered member dashboard
+   ========================================================= */
+
 (() => {
   "use strict";
 
   const SUPABASE_URL = "https://vulbvlardmvvxdhqyopn.supabase.co";
-  const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_hve5CvGEO3tyocvupHOv9w_zEVEaN9a";
+  const SUPABASE_PUBLISHABLE_KEY =
+    "sb_publishable_hve5CvGEO3tyocvupHOv9w_zEVEaN9a";
   const SUPPORT_EMAIL = "smartcoin@gmail.com";
 
   const PAYD_LINKS = {
@@ -15,6 +22,7 @@
   };
 
   const $ = id => document.getElementById(id);
+
   const db = window.supabase?.createClient(
     SUPABASE_URL,
     SUPABASE_PUBLISHABLE_KEY
@@ -23,23 +31,65 @@
   let currentUser = null;
   let currentProfile = null;
   let authListenerRegistered = false;
+  let dashboardRequest = 0;
 
   const themes = [
-    {bg:"#07140d",surface:"#0d2116",surface2:"#112b1c",text:"#eff8f1",muted:"#a8bcae",accent:"#69e69a",accent2:"#b4f4c9",line:"#244633"},
-    {bg:"#07111e",surface:"#0d1e32",surface2:"#122943",text:"#eef6ff",muted:"#a9bdd3",accent:"#69c7ff",accent2:"#c2eaff",line:"#24435f"},
-    {bg:"#160e20",surface:"#24162f",surface2:"#32203f",text:"#fbf1ff",muted:"#c5b0d1",accent:"#d5a1ff",accent2:"#f0d9ff",line:"#4a3159"},
-    {bg:"#19140b",surface:"#292012",surface2:"#392b16",text:"#fff7e7",muted:"#d0c1a3",accent:"#f2c56b",accent2:"#ffebba",line:"#5b4726"}
+    {
+      bg: "#07140d",
+      surface: "#0d2116",
+      surface2: "#112b1c",
+      text: "#eff8f1",
+      muted: "#a8bcae",
+      accent: "#69e69a",
+      accent2: "#b4f4c9",
+      line: "#244633"
+    },
+    {
+      bg: "#07111e",
+      surface: "#0d1e32",
+      surface2: "#122943",
+      text: "#eef6ff",
+      muted: "#a9bdd3",
+      accent: "#69c7ff",
+      accent2: "#c2eaff",
+      line: "#24435f"
+    },
+    {
+      bg: "#160e20",
+      surface: "#24162f",
+      surface2: "#32203f",
+      text: "#fbf1ff",
+      muted: "#c5b0d1",
+      accent: "#d5a1ff",
+      accent2: "#f0d9ff",
+      line: "#4a3159"
+    },
+    {
+      bg: "#19140b",
+      surface: "#292012",
+      surface2: "#392b16",
+      text: "#fff7e7",
+      muted: "#d0c1a3",
+      accent: "#f2c56b",
+      accent2: "#ffebba",
+      line: "#5b4726"
+    }
   ];
+
+  /* ---------------- NOTICES ---------------- */
 
   function notice(message, type = "info") {
     const el = $("notice");
+
     if (!el) {
       console.log(message);
       return;
     }
+
     el.textContent = String(message || "Something went wrong.");
     el.className = `notice ${type}`;
     el.classList.remove("hidden");
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -47,26 +97,41 @@
     $("notice")?.classList.add("hidden");
   }
 
-  function showView(id) {
-    ["authView", "activationView", "pendingView", "dashboardView"]
-      .forEach(view => {
-        $(view)?.classList.toggle("hidden", view !== id);
-      });
-    clearNotice();
+  function showError(error) {
+    console.error("SCF error:", error);
+    notice(
+      error?.message || "Something went wrong. Please try again.",
+      "error"
+    );
   }
 
-  function showError(error) {
-    notice(error?.message || "Something went wrong. Please try again.", "error");
+  /* ---------------- PAGE NAVIGATION ---------------- */
+
+  function showView(id) {
+    [
+      "authView",
+      "activationView",
+      "pendingView",
+      "dashboardView"
+    ].forEach(view => {
+      $(view)?.classList.toggle("hidden", view !== id);
+    });
+
+    clearNotice();
   }
 
   function switchMode(mode) {
-    document.querySelectorAll(".tab").forEach(tab =>
-      tab.classList.toggle("active", tab.dataset.mode === mode)
-    );
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.classList.toggle("active", tab.dataset.mode === mode);
+    });
+
     $("signupForm")?.classList.toggle("hidden", mode !== "signup");
     $("loginForm")?.classList.toggle("hidden", mode !== "login");
+
     clearNotice();
   }
+
+  /* ---------------- PROFILE ---------------- */
 
   function phoneClean(phone) {
     return String(phone || "").trim().replace(/[()\s-]/g, "");
@@ -81,7 +146,10 @@
   async function loadProfile(user) {
     const { data, error } = await db
       .from("profiles")
-      .select("id,full_name,email,phone,role,account_status,referral_code,referred_by,country,education_level")
+      .select(
+        "id,full_name,email,phone,role,account_status," +
+        "referral_code,referred_by,country,education_level"
+      )
       .eq("id", user.id)
       .maybeSingle();
 
@@ -91,35 +159,39 @@
 
   async function routeUser(user) {
     currentUser = user;
+    currentProfile = null;
 
     try {
-      currentProfile = await loadProfile(user);
+      const profile = await loadProfile(user);
+      currentProfile = profile;
 
-      if (!currentProfile) {
+      if (!profile) {
         showView("authView");
         notice(
-          "Your login exists but your SCF profile is missing. Please contact support.",
+          "Your login exists but your SCF profile is missing. " +
+          "Please contact support.",
           "error"
         );
         return;
       }
 
-      if (currentProfile.account_status === "approved") {
-        showDashboard(currentProfile);
+      if (profile.account_status === "approved") {
+        showDashboard(profile);
         return;
       }
 
       if (
         ["awaiting_activation", "rejected"].includes(
-          currentProfile.account_status
+          profile.account_status
         )
       ) {
         showView("activationView");
         updatePayLink();
 
-        if (currentProfile.account_status === "rejected") {
+        if (profile.account_status === "rejected") {
           notice(
-            "Your previous submission needs attention. Contact support before paying again.",
+            "Your previous submission needs attention. " +
+            "Contact support before paying again.",
             "info"
           );
         }
@@ -128,7 +200,7 @@
 
       if ($("pendingLabel")) {
         $("pendingLabel").textContent =
-          currentProfile.account_status === "payment_review"
+          profile.account_status === "payment_review"
             ? "Payment under review"
             : "Pending approval";
       }
@@ -138,18 +210,20 @@
       showView("authView");
       notice(
         "Could not load your SCF profile: " +
-          (error.message || "Unknown error"),
+        (error.message || "Unknown error"),
         "error"
       );
     }
   }
+
+  /* ---------------- DASHBOARD ---------------- */
 
   function showDashboard(profile) {
     showView("dashboardView");
 
     if ($("memberName")) {
       $("memberName").textContent =
-        (profile.full_name || profile.email || "member").split(" ")[0];
+        (profile.full_name || profile.email || "Member").split(" ")[0];
     }
 
     if ($("dashStatus")) {
@@ -161,7 +235,8 @@
     }
 
     if ($("refCount")) {
-      $("refCount").textContent = "Referral count will appear when connected.";
+      $("refCount").textContent =
+        "Referral count will appear when connected.";
     }
 
     if ($("copyReferral")) {
@@ -172,7 +247,311 @@
       $("circleFeed").textContent =
         "Your circle updates will appear here when verified milestones are available.";
     }
+
+    loadDashboardData();
   }
+
+  /* ---------------- DASHBOARD UI HELPERS ---------------- */
+
+  function createCard(titleText) {
+    const card = document.createElement("section");
+
+    card.style.cssText = [
+      "padding:18px",
+      "border:1px solid var(--line)",
+      "border-radius:14px",
+      "background:var(--surface)",
+      "color:var(--text)",
+      "min-width:0"
+    ].join(";");
+
+    const title = document.createElement("h3");
+    title.textContent = titleText;
+    title.style.marginTop = "0";
+
+    card.appendChild(title);
+    return card;
+  }
+
+  function createText(text) {
+    const p = document.createElement("p");
+    p.textContent = text;
+    p.style.color = "var(--muted)";
+    return p;
+  }
+
+  function createActionButton(label, callback) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.style.cssText = [
+      "padding:10px 14px",
+      "border:1px solid var(--line)",
+      "border-radius:9px",
+      "background:var(--surface2)",
+      "color:var(--text)",
+      "cursor:pointer"
+    ].join(";");
+
+    button.addEventListener("click", callback);
+    return button;
+  }
+
+  function money(value, currency = "KES") {
+    const amount = Number(value);
+
+    if (!Number.isFinite(amount)) {
+      return `${currency} —`;
+    }
+
+    return `${currency} ${amount.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
+  }
+
+  function setMessage(container, message) {
+    container.replaceChildren(createText(message));
+  }
+
+  /* ---------------- REAL WALLET, TASKS & WITHDRAWALS ---------------- */
+
+  async function loadDashboardData() {
+    if (!db || !currentUser || !currentProfile) return;
+
+    if (currentProfile.account_status !== "approved") return;
+
+    const userId = currentUser.id;
+    const requestId = ++dashboardRequest;
+    const dashboard = $("dashboardView");
+
+    if (!dashboard) return;
+
+    let panel = $("scfLiveDashboard");
+
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "scfLiveDashboard";
+      panel.style.cssText =
+        "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
+      dashboard.appendChild(panel);
+    }
+
+    panel.replaceChildren();
+
+    const walletCard = createCard("💰 My Wallet");
+    const walletContent = document.createElement("div");
+    setMessage(walletContent, "Loading your wallet…");
+    walletCard.appendChild(walletContent);
+
+    const tasksCard = createCard("📋 Available Tasks");
+    const tasksContent = document.createElement("div");
+    setMessage(tasksContent, "Loading available tasks…");
+    tasksCard.appendChild(tasksContent);
+
+    const withdrawalsCard = createCard("🏦 Withdrawal History");
+    const withdrawalsContent = document.createElement("div");
+    setMessage(withdrawalsContent, "Loading withdrawal history…");
+    withdrawalsCard.appendChild(withdrawalsContent);
+
+    const refreshButton = createActionButton(
+      "↻ Refresh dashboard",
+      () => loadDashboardData()
+    );
+
+    panel.append(
+      walletCard,
+      tasksCard,
+      withdrawalsCard,
+      refreshButton
+    );
+
+    const [walletResult, tasksResult, withdrawalsResult] =
+      await Promise.all([
+        db
+          .from("wallets")
+          .select(
+            "currency,available_balance,reserved_balance,total_withdrawn"
+          )
+          .eq("user_id", userId)
+          .maybeSingle(),
+
+        db
+          .from("tasks")
+          .select(
+            "id,title,description,task_type,reward_points," +
+            "reward_kes,requires_review"
+          )
+          .eq("is_active", true)
+          .order("created_at", { ascending: false }),
+
+        db
+          .from("withdrawal_requests")
+          .select(
+            "id,amount,currency,status,created_at,admin_note"
+          )
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(10)
+      ]);
+
+    if (
+      requestId !== dashboardRequest ||
+      !currentUser ||
+      currentUser.id !== userId
+    ) {
+      return;
+    }
+
+    /* WALLET */
+
+    walletContent.replaceChildren();
+
+    if (walletResult.error) {
+      setMessage(
+        walletContent,
+        "Unable to load your wallet. Check the wallets SELECT policy."
+      );
+      console.error("Wallet load error:", walletResult.error);
+    } else if (!walletResult.data) {
+      setMessage(
+        walletContent,
+        "No wallet record was found for your account. Contact support."
+      );
+    } else {
+      const wallet = walletResult.data;
+      const currency = wallet.currency || "KES";
+
+      const balanceLabel = createText("Available balance");
+      balanceLabel.style.marginBottom = "4px";
+
+      const balance = document.createElement("p");
+      balance.textContent = money(wallet.available_balance, currency);
+      balance.style.cssText =
+        "font-size:1.5rem;font-weight:bold;color:var(--accent);margin:4px 0 16px;";
+
+      const reserved = createText(
+        "Reserved: " + money(wallet.reserved_balance, currency)
+      );
+
+      const withdrawn = createText(
+        "Total withdrawn: " + money(wallet.total_withdrawn, currency)
+      );
+
+      walletContent.append(
+        balanceLabel,
+        balance,
+        reserved,
+        withdrawn
+      );
+    }
+
+    /* TASKS */
+
+    tasksContent.replaceChildren();
+
+    if (tasksResult.error) {
+      setMessage(
+        tasksContent,
+        "Unable to load tasks. Check the tasks SELECT policy."
+      );
+      console.error("Tasks load error:", tasksResult.error);
+    } else if (!tasksResult.data?.length) {
+      setMessage(tasksContent, "No active tasks are available right now.");
+    } else {
+      tasksResult.data.forEach(task => {
+        const taskCard = document.createElement("article");
+        taskCard.style.cssText =
+          "padding:13px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;";
+
+        const title = document.createElement("h4");
+        title.textContent = task.title;
+
+        const description = createText(task.description || "No description provided.");
+
+        const points = createText(
+          `${Number(task.reward_points || 0)} points`
+        );
+
+        const cash = createText(
+          `Cash reward: ${money(task.reward_kes || 0, "KES")}`
+        );
+
+        const review = createText(
+          task.requires_review
+            ? "Completion requires administrator review."
+            : "Task completion rules must be configured."
+        );
+
+        const unavailable = createText(
+          "Task completion is not enabled yet."
+        );
+        unavailable.style.fontSize = "0.85rem";
+
+        taskCard.append(
+          title,
+          description,
+          points,
+          cash,
+          review,
+          unavailable
+        );
+
+        tasksContent.appendChild(taskCard);
+      });
+    }
+
+    /* WITHDRAWAL HISTORY */
+
+    withdrawalsContent.replaceChildren();
+
+    if (withdrawalsResult.error) {
+      setMessage(
+        withdrawalsContent,
+        "Unable to load withdrawal history. Check the withdrawal SELECT policy."
+      );
+      console.error(
+        "Withdrawal history error:",
+        withdrawalsResult.error
+      );
+    } else if (!withdrawalsResult.data?.length) {
+      setMessage(
+        withdrawalsContent,
+        "You have no withdrawal requests yet."
+      );
+    } else {
+      withdrawalsResult.data.forEach(request => {
+        const item = document.createElement("article");
+        item.style.cssText =
+          "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
+
+        const amount = document.createElement("strong");
+        amount.textContent = money(request.amount, request.currency || "KES");
+
+        const status = createText(
+          "Status: " + (request.status || "unknown")
+        );
+
+        const date = createText(
+          request.created_at
+            ? "Requested: " + new Date(request.created_at).toLocaleString()
+            : "Request date unavailable"
+        );
+
+        item.append(amount, status, date);
+
+        if (request.admin_note) {
+          item.appendChild(
+            createText("Admin note: " + request.admin_note)
+          );
+        }
+
+        withdrawalsContent.appendChild(item);
+      });
+    }
+  }
+
+  /* ---------------- PAYD ACTIVATION ---------------- */
 
   function updatePayLink() {
     const countryEl = $("payCountry");
@@ -199,34 +578,45 @@
       const message = document.createElement("div");
       message.className = "pay-unavailable";
       message.textContent =
-        `${country || "Selected country"} payment link is not configured. Contact support before paying.`;
+        `${country || "Selected country"} payment link is not configured. ` +
+        "Contact support before paying.";
       area.appendChild(message);
     }
   }
+
+  /* ---------------- SIGNUP ---------------- */
 
   async function signup(event) {
     event.preventDefault();
     clearNotice();
 
     if (!db) {
-      return notice("Supabase did not load. Check your configuration.", "error");
+      return notice(
+        "Supabase did not load. Check your configuration.",
+        "error"
+      );
     }
 
     const form = event.currentTarget;
     const button = form.querySelector('button[type="submit"]');
+
     if (button) button.disabled = true;
 
     const fd = new FormData(form);
     const fullName = String(fd.get("full_name") || "").trim();
     const email = String(fd.get("email") || "").trim().toLowerCase();
     const phone = phoneClean(fd.get("phone"));
+
     const referral =
       getReferral() ||
       String(fd.get("referral_code") || "").trim().toUpperCase();
 
     if (!fullName || !email || !phone) {
       if (button) button.disabled = false;
-      return notice("Please complete your name, email, and phone number.", "error");
+      return notice(
+        "Please complete your name, email, and phone number.",
+        "error"
+      );
     }
 
     const metadata = {
@@ -250,13 +640,18 @@
       if (data.user && !data.session) {
         switchMode("login");
         notice(
-          "Registration received. If email confirmation is enabled, confirm your email, then log in. Your SCF profile should be created automatically.",
+          "Registration received. If email confirmation is enabled, " +
+          "confirm your email, then log in. Your SCF profile should be " +
+          "created automatically.",
           "success"
         );
       } else if (data.user) {
         await routeUser(data.user);
       } else {
-        notice("Registration response received. Please log in.", "success");
+        notice(
+          "Registration response received. Please log in.",
+          "success"
+        );
       }
     } catch (error) {
       showError(error);
@@ -265,14 +660,19 @@
     }
   }
 
+  /* ---------------- LOGIN ---------------- */
+
   async function login(event) {
     event.preventDefault();
     clearNotice();
 
-    if (!db) return notice("Supabase did not load. Check your configuration.", "error");
+    if (!db) {
+      return notice("Supabase did not load.", "error");
+    }
 
     const form = event.currentTarget;
     const button = form.querySelector('button[type="submit"]');
+
     if (button) button.disabled = true;
 
     const fd = new FormData(form);
@@ -292,53 +692,39 @@
     }
   }
 
-  async function refreshStatus() {
-    if (!db) return notice("Supabase is not connected.", "error");
-
-    const { data, error } = await db.auth.getUser();
-    if (error) return showError(error);
-
-    if (!data.user) {
-      currentUser = null;
-      currentProfile = null;
-      showView("authView");
-      return;
-    }
-
-    await routeUser(data.user);
-  }
-
-  async function logout() {
-    if (db) {
-      const { error } = await db.auth.signOut();
-      if (error) return showError(error);
-    }
-
-    currentUser = null;
-    currentProfile = null;
-    switchMode("login");
-    showView("authView");
-  }
+  /* ---------------- PAYMENT REFERENCE SUBMISSION ---------------- */
 
   async function submitProof(event) {
     event.preventDefault();
     clearNotice();
 
     if (!db || !currentUser || !currentProfile) {
-      return notice("Please log in again before submitting your payment reference.", "error");
+      return notice(
+        "Please log in again before submitting your payment reference.",
+        "error"
+      );
     }
 
-    if (!["awaiting_activation", "rejected"].includes(currentProfile.account_status)) {
-      return notice("Your account is not currently eligible to submit a new reference.", "error");
+    if (
+      !["awaiting_activation", "rejected"].includes(
+        currentProfile.account_status
+      )
+    ) {
+      return notice(
+        "Your account is not currently eligible to submit a new reference.",
+        "error"
+      );
     }
 
     const form = event.currentTarget;
     const button = form.querySelector('button[type="submit"]');
+
     if (button) button.disabled = true;
 
     const fd = new FormData(form);
     const reference = String(fd.get("reference") || "").trim();
-    const country = $("payCountry")?.value || currentProfile.country || "";
+    const country =
+      $("payCountry")?.value || currentProfile.country || "";
     const level = Number($("payLevel")?.value);
 
     if (!reference) {
@@ -352,154 +738,31 @@
     }
 
     try {
-      const { error } = await db.from("payment_submissions").insert({
-        user_id: currentUser.id,
-        country,
-        membership_level: level,
-        payment_provider: "Payd",
-        payment_reference: reference,
-        status: "submitted"
-      });
+      const { error } = await db
+        .from("payment_submissions")
+        .insert({
+          user_id: currentUser.id,
+          country,
+          membership_level: level,
+          payment_provider: "Payd",
+          payment_reference: reference,
+          status: "submitted"
+        });
 
       if (error) throw error;
 
       notice(
-        "Your reference was submitted. Your account remains locked while the administrator reviews it. If your status does not change, contact support.",
+        "Your reference was submitted. Your account remains locked " +
+        "while the administrator reviews it.",
         "success"
       );
 
       await refreshStatus();
     } catch (error) {
-      notice(
-        "Could not submit reference: " +
-          (error.message || "Please check the payment_submissions table and INSERT policy."),
-        "error"
-      );
+      showError(error);
     } finally {
       if (button) button.disabled = false;
     }
   }
 
-  async function copyInvite() {
-    if (!currentProfile?.referral_code) {
-      return notice(
-        "Your referral code is not assigned yet. Ask the administrator to configure referral codes.",
-        "info"
-      );
-    }
-
-    const link =
-      `${location.origin}${location.pathname}?ref=${encodeURIComponent(currentProfile.referral_code)}`;
-
-    try {
-      await navigator.clipboard.writeText(link);
-      notice("Referral link copied. Share it with a friend!", "success");
-    } catch {
-      notice(link, "info");
-    }
-  }
-
-  function applyTheme() {
-    const cycle = 46060 * 1000;
-    const theme = themes[Math.floor(Date.now() / cycle) % themes.length];
-
-    Object.entries(theme).forEach(([key, value]) => {
-      document.documentElement.style.setProperty("--" + key, value);
-    });
-  }
-
-  function startCommunityCounter() {
-    const el = $("communityCount");
-    if (el) el.textContent = "SCF Africa Connect";
-  }
-
-  function wire() {
-    document.querySelectorAll(".tab").forEach(tab => {
-      tab.addEventListener("click", () => switchMode(tab.dataset.mode));
-    });
-
-    $("signupForm")?.addEventListener("submit", signup);
-    $("loginForm")?.addEventListener("submit", login);
-    $("proofForm")?.addEventListener("submit", submitProof);
-
-    $("payCountry")?.addEventListener("change", updatePayLink);
-    $("payLevel")?.addEventListener("change", updatePayLink);
-
-    ["checkStatus", "checkPending"].forEach(id => {
-      $(id)?.addEventListener("click", refreshStatus);
-    });
-
-    ["logoutActivation", "logoutPending", "dashLogout"].forEach(id => {
-      $(id)?.addEventListener("click", logout);
-    });
-
-    ["copyReferral", "shareInvite"].forEach(id => {
-      $(id)?.addEventListener("click", copyInvite);
-    });
-
-    $("showSupport")?.addEventListener("click", () => {
-      location.href = "mailto:" + SUPPORT_EMAIL;
-    });
-
-    $("resetPassword")?.addEventListener("click", async () => {
-      if (!db) return notice("Supabase is not connected.", "error");
-
-      const email = String(
-        $("loginForm")?.elements?.email?.value || ""
-      ).trim();
-
-      if (!email) return notice("Enter your email address first.", "info");
-
-      const { error } = await db.auth.resetPasswordForEmail(email, {
-        redirectTo: location.href.split("?")[0]
-      });
-
-      if (error) showError(error);
-      else notice("If password reset is enabled, check your email for a reset link.", "success");
-    });
-  }
-
-  async function init() {
-    if ($("year")) $("year").textContent = new Date().getFullYear();
-
-    applyTheme();
-    setInterval(applyTheme, 60000);
-    startCommunityCounter();
-    wire();
-    updatePayLink();
-
-    if (!db) {
-      notice(
-        "Supabase client did not load. Check your internet connection and make sure the Supabase JS library loads before app.js.",
-        "error"
-      );
-      return;
-    }
-
-    const { data, error } = await db.auth.getSession();
-    if (error) showError(error);
-
-    if (data?.session?.user) {
-      await routeUser(data.session.user);
-    } else {
-      showView("authView");
-    }
-
-    if (!authListenerRegistered) {
-      authListenerRegistered = true;
-
-      db.auth.onAuthStateChange((_event, session) => {
-        if (session?.user && !currentUser) {
-          setTimeout(() => routeUser(session.user), 0);
-        }
-
-        if (!session?.user) {
-          currentUser = null;
-          currentProfile = null;
-        }
-      });
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", init);
-})();
+  /* ------------
