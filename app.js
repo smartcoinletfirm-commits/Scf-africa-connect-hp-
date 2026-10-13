@@ -1,15 +1,20 @@
 /* =========================================================
    SCF AFRICA CONNECT | SMART COINLET FIRM
-   Authentication • Activation • Dashboard • Wallet • Tasks
-   Supabase-powered member dashboard
+   Authentication • Payd Activation • Approval • Dashboard
+   Wallet • Tasks • Withdrawals • Theme Rotation • Hours
    ========================================================= */
 
 (() => {
   "use strict";
 
-  const SUPABASE_URL = "https://vulbvlardmvvxdhqyopn.supabase.co";
+  /* ---------------- CONFIGURATION ---------------- */
+
+  const SUPABASE_URL =
+    "https://vulbvlardmvvxdhqyopn.supabase.co";
+
   const SUPABASE_PUBLISHABLE_KEY =
     "sb_publishable_hve5CvGEO3tyocvupHOv9w_zEVEaN9a";
+
   const SUPPORT_EMAIL = "smartcoin@gmail.com";
 
   const PAYD_LINKS = {
@@ -21,6 +26,17 @@
     }
   };
 
+  const THEME_ORDER = [
+    "sky-blue",
+    "lavender",
+    "forest-green",
+    "rose-pink",
+    "light-mode"
+  ];
+
+  const THEME_INTERVAL = 40 * 60 * 1000;
+  const THEME_STORAGE_KEY = "scf_theme_rotation_started_v1";
+
   const $ = id => document.getElementById(id);
 
   const db = window.supabase?.createClient(
@@ -30,51 +46,9 @@
 
   let currentUser = null;
   let currentProfile = null;
-  let authListenerRegistered = false;
   let dashboardRequest = 0;
-
-  const themes = [
-    {
-      bg: "#07140d",
-      surface: "#0d2116",
-      surface2: "#112b1c",
-      text: "#eff8f1",
-      muted: "#a8bcae",
-      accent: "#69e69a",
-      accent2: "#b4f4c9",
-      line: "#244633"
-    },
-    {
-      bg: "#07111e",
-      surface: "#0d1e32",
-      surface2: "#122943",
-      text: "#eef6ff",
-      muted: "#a9bdd3",
-      accent: "#69c7ff",
-      accent2: "#c2eaff",
-      line: "#24435f"
-    },
-    {
-      bg: "#160e20",
-      surface: "#24162f",
-      surface2: "#32203f",
-      text: "#fbf1ff",
-      muted: "#c5b0d1",
-      accent: "#d5a1ff",
-      accent2: "#f0d9ff",
-      line: "#4a3159"
-    },
-    {
-      bg: "#19140b",
-      surface: "#292012",
-      surface2: "#392b16",
-      text: "#fff7e7",
-      muted: "#d0c1a3",
-      accent: "#f2c56b",
-      accent2: "#ffebba",
-      line: "#5b4726"
-    }
-  ];
+  let authListenerRegistered = false;
+  let gateInterval = null;
 
   /* ---------------- NOTICES ---------------- */
 
@@ -82,7 +56,7 @@
     const el = $("notice");
 
     if (!el) {
-      console.log(message);
+      console.log("[SCF]", message);
       return;
     }
 
@@ -99,6 +73,7 @@
 
   function showError(error) {
     console.error("SCF error:", error);
+
     notice(
       error?.message || "Something went wrong. Please try again.",
       "error"
@@ -131,10 +106,12 @@
     clearNotice();
   }
 
-  /* ---------------- PROFILE ---------------- */
+  /* ---------------- PHONE AND REFERRAL ---------------- */
 
   function phoneClean(phone) {
-    return String(phone || "").trim().replace(/[()\s-]/g, "");
+    return String(phone || "")
+      .trim()
+      .replace(/[()\s-]/g, "");
   }
 
   function getReferral() {
@@ -143,7 +120,13 @@
     ).trim().toUpperCase();
   }
 
+  /* ---------------- PROFILE ---------------- */
+
   async function loadProfile(user) {
+    if (!db || !user?.id) {
+      throw new Error("Please log in again.");
+    }
+
     const { data, error } = await db
       .from("profiles")
       .select(
@@ -154,10 +137,19 @@
       .maybeSingle();
 
     if (error) throw error;
+
     return data;
   }
 
   async function routeUser(user) {
+    if (!user) {
+      currentUser = null;
+      currentProfile = null;
+      showView("authView");
+      switchMode("login");
+      return;
+    }
+
     currentUser = user;
     currentProfile = null;
 
@@ -167,11 +159,13 @@
 
       if (!profile) {
         showView("authView");
+
         notice(
           "Your login exists but your SCF profile is missing. " +
           "Please contact support.",
           "error"
         );
+
         return;
       }
 
@@ -195,6 +189,7 @@
             "info"
           );
         }
+
         return;
       }
 
@@ -205,33 +200,74 @@
             : "Pending approval";
       }
 
+      if ($("pendingMessage")) {
+        $("pendingMessage").textContent =
+          "Your account is waiting for administrator review. " +
+          "Approval may take approximately 6–12 hours. " +
+          "If the delay continues, contact " + SUPPORT_EMAIL + ".";
+      }
+
       showView("pendingView");
     } catch (error) {
+      console.error("Profile routing error:", error);
+
       showView("authView");
+
       notice(
-        "Could not load your SCF profile: " +
-        (error.message || "Unknown error"),
+        "Could not load your SCF profile. Please refresh or contact support.",
         "error"
       );
+    }
+  }
+
+  async function refreshStatus() {
+    if (!currentUser) return;
+
+    try {
+      const profile = await loadProfile(currentUser);
+      currentProfile = profile;
+
+      if (!profile) {
+        showView("authView");
+
+        notice(
+          "Your SCF profile was not found. Contact support.",
+          "error"
+        );
+
+        return;
+      }
+
+      await routeUser(currentUser);
+    } catch (error) {
+      showError(error);
     }
   }
 
   /* ---------------- DASHBOARD ---------------- */
 
   function showDashboard(profile) {
+    if (!profile || profile.account_status !== "approved") {
+      showView("pendingView");
+      return;
+    }
+
     showView("dashboardView");
 
     if ($("memberName")) {
       $("memberName").textContent =
-        (profile.full_name || profile.email || "Member").split(" ")[0];
+        (profile.full_name || profile.email || "Member")
+          .split(" ")[0];
     }
 
     if ($("dashStatus")) {
-      $("dashStatus").textContent = profile.account_status || "unknown";
+      $("dashStatus").textContent =
+        profile.account_status || "unknown";
     }
 
     if ($("refCode")) {
-      $("refCode").textContent = profile.referral_code || "Not assigned";
+      $("refCode").textContent =
+        profile.referral_code || "Not assigned";
     }
 
     if ($("refCount")) {
@@ -270,20 +306,25 @@
     title.style.marginTop = "0";
 
     card.appendChild(title);
+
     return card;
   }
 
   function createText(text) {
     const p = document.createElement("p");
-    p.textContent = text;
+
+    p.textContent = String(text ?? "");
     p.style.color = "var(--muted)";
+
     return p;
   }
 
   function createActionButton(label, callback) {
     const button = document.createElement("button");
+
     button.type = "button";
     button.textContent = label;
+
     button.style.cssText = [
       "padding:10px 14px",
       "border:1px solid var(--line)",
@@ -294,6 +335,7 @@
     ].join(";");
 
     button.addEventListener("click", callback);
+
     return button;
   }
 
@@ -314,7 +356,7 @@
     container.replaceChildren(createText(message));
   }
 
-  /* ---------------- REAL WALLET, TASKS & WITHDRAWALS ---------------- */
+  /* ---------------- WALLET, TASKS AND WITHDRAWALS ---------------- */
 
   async function loadDashboardData() {
     if (!db || !currentUser || !currentProfile) return;
@@ -332,8 +374,12 @@
     if (!panel) {
       panel = document.createElement("div");
       panel.id = "scfLiveDashboard";
+
       panel.style.cssText =
-        "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
+        "display:grid;" +
+        "grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));" +
+        "gap:16px;margin-top:20px;";
+
       dashboard.appendChild(panel);
     }
 
@@ -341,16 +387,19 @@
 
     const walletCard = createCard("💰 My Wallet");
     const walletContent = document.createElement("div");
+
     setMessage(walletContent, "Loading your wallet…");
     walletCard.appendChild(walletContent);
 
     const tasksCard = createCard("📋 Available Tasks");
     const tasksContent = document.createElement("div");
+
     setMessage(tasksContent, "Loading available tasks…");
     tasksCard.appendChild(tasksContent);
 
     const withdrawalsCard = createCard("🏦 Withdrawal History");
     const withdrawalsContent = document.createElement("div");
+
     setMessage(withdrawalsContent, "Loading withdrawal history…");
     withdrawalsCard.appendChild(withdrawalsContent);
 
@@ -398,7 +447,8 @@
     if (
       requestId !== dashboardRequest ||
       !currentUser ||
-      currentUser.id !== userId
+      currentUser.id !== userId ||
+      currentProfile?.account_status !== "approved"
     ) {
       return;
     }
@@ -412,6 +462,7 @@
         walletContent,
         "Unable to load your wallet. Check the wallets SELECT policy."
       );
+
       console.error("Wallet load error:", walletResult.error);
     } else if (!walletResult.data) {
       setMessage(
@@ -426,16 +477,23 @@
       balanceLabel.style.marginBottom = "4px";
 
       const balance = document.createElement("p");
-      balance.textContent = money(wallet.available_balance, currency);
+      balance.textContent = money(
+        wallet.available_balance,
+        currency
+      );
+
       balance.style.cssText =
-        "font-size:1.5rem;font-weight:bold;color:var(--accent);margin:4px 0 16px;";
+        "font-size:1.5rem;font-weight:bold;" +
+        "color:var(--accent);margin:4px 0 16px;";
 
       const reserved = createText(
-        "Reserved: " + money(wallet.reserved_balance, currency)
+        "Reserved: " +
+        money(wallet.reserved_balance, currency)
       );
 
       const withdrawn = createText(
-        "Total withdrawn: " + money(wallet.total_withdrawn, currency)
+        "Total withdrawn: " +
+        money(wallet.total_withdrawn, currency)
       );
 
       walletContent.append(
@@ -455,19 +513,28 @@
         tasksContent,
         "Unable to load tasks. Check the tasks SELECT policy."
       );
+
       console.error("Tasks load error:", tasksResult.error);
     } else if (!tasksResult.data?.length) {
-      setMessage(tasksContent, "No active tasks are available right now.");
+      setMessage(
+        tasksContent,
+        "No active tasks are available right now."
+      );
     } else {
       tasksResult.data.forEach(task => {
         const taskCard = document.createElement("article");
+
         taskCard.style.cssText =
-          "padding:13px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;";
+          "padding:13px;margin-bottom:12px;" +
+          "border:1px solid var(--line);" +
+          "border-radius:10px;overflow-wrap:anywhere;";
 
         const title = document.createElement("h4");
         title.textContent = task.title;
 
-        const description = createText(task.description || "No description provided.");
+        const description = createText(
+          task.description || "No description provided."
+        );
 
         const points = createText(
           `${Number(task.reward_points || 0)} points`
@@ -486,6 +553,7 @@
         const unavailable = createText(
           "Task completion is not enabled yet."
         );
+
         unavailable.style.fontSize = "0.85rem";
 
         taskCard.append(
@@ -510,6 +578,7 @@
         withdrawalsContent,
         "Unable to load withdrawal history. Check the withdrawal SELECT policy."
       );
+
       console.error(
         "Withdrawal history error:",
         withdrawalsResult.error
@@ -522,11 +591,17 @@
     } else {
       withdrawalsResult.data.forEach(request => {
         const item = document.createElement("article");
+
         item.style.cssText =
-          "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
+          "padding:12px 0;border-bottom:1px solid var(--line);" +
+          "overflow-wrap:anywhere;";
 
         const amount = document.createElement("strong");
-        amount.textContent = money(request.amount, request.currency || "KES");
+
+        amount.textContent = money(
+          request.amount,
+          request.currency || "KES"
+        );
 
         const status = createText(
           "Status: " + (request.status || "unknown")
@@ -534,7 +609,8 @@
 
         const date = createText(
           request.created_at
-            ? "Requested: " + new Date(request.created_at).toLocaleString()
+            ? "Requested: " +
+              new Date(request.created_at).toLocaleString()
             : "Request date unavailable"
         );
 
@@ -568,18 +644,22 @@
 
     if (url) {
       const link = document.createElement("a");
+
       link.className = "pay-link";
       link.href = url;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.textContent = `Payd · ${country} · Level ${level} ↗`;
+
       area.appendChild(link);
     } else {
       const message = document.createElement("div");
+
       message.className = "pay-unavailable";
       message.textContent =
         `${country || "Selected country"} payment link is not configured. ` +
         "Contact support before paying.";
+
       area.appendChild(message);
     }
   }
@@ -591,10 +671,11 @@
     clearNotice();
 
     if (!db) {
-      return notice(
+      notice(
         "Supabase did not load. Check your configuration.",
         "error"
       );
+      return;
     }
 
     const form = event.currentTarget;
@@ -603,26 +684,39 @@
     if (button) button.disabled = true;
 
     const fd = new FormData(form);
-    const fullName = String(fd.get("full_name") || "").trim();
-    const email = String(fd.get("email") || "").trim().toLowerCase();
+
+    const fullName = String(
+      fd.get("full_name") || ""
+    ).trim();
+
+    const email = String(
+      fd.get("email") || ""
+    ).trim().toLowerCase();
+
     const phone = phoneClean(fd.get("phone"));
 
     const referral =
       getReferral() ||
-      String(fd.get("referral_code") || "").trim().toUpperCase();
+      String(fd.get("referral_code") || "")
+        .trim()
+        .toUpperCase();
 
     if (!fullName || !email || !phone) {
-      if (button) button.disabled = false;
-      return notice(
+      notice(
         "Please complete your name, email, and phone number.",
         "error"
       );
+
+      if (button) button.disabled = false;
+      return;
     }
 
     const metadata = {
       full_name: fullName,
       phone,
-      education_level: String(fd.get("education_level") || ""),
+      education_level: String(
+        fd.get("education_level") || ""
+      ),
       country: String(fd.get("country") || ""),
       age_confirmed: fd.get("age_confirmed") === "on",
       referral_code: referral || null
@@ -632,17 +726,20 @@
       const { data, error } = await db.auth.signUp({
         email,
         password: String(fd.get("password") || ""),
-        options: { data: metadata }
+        options: {
+          data: metadata
+        }
       });
 
       if (error) throw error;
 
       if (data.user && !data.session) {
         switchMode("login");
+
         notice(
           "Registration received. If email confirmation is enabled, " +
-          "confirm your email, then log in. Your SCF profile should be " +
-          "created automatically.",
+          "confirm your email, then log in. Your SCF profile should " +
+          "be created automatically.",
           "success"
         );
       } else if (data.user) {
@@ -667,7 +764,8 @@
     clearNotice();
 
     if (!db) {
-      return notice("Supabase did not load.", "error");
+      notice("Supabase did not load.", "error");
+      return;
     }
 
     const form = event.currentTarget;
@@ -679,11 +777,15 @@
 
     try {
       const { data, error } = await db.auth.signInWithPassword({
-        email: String(fd.get("email") || "").trim().toLowerCase(),
+        email: String(fd.get("email") || "")
+          .trim()
+          .toLowerCase(),
+
         password: String(fd.get("password") || "")
       });
 
       if (error) throw error;
+
       await routeUser(data.user);
     } catch (error) {
       showError(error);
@@ -699,10 +801,11 @@
     clearNotice();
 
     if (!db || !currentUser || !currentProfile) {
-      return notice(
+      notice(
         "Please log in again before submitting your payment reference.",
         "error"
       );
+      return;
     }
 
     if (
@@ -710,10 +813,11 @@
         currentProfile.account_status
       )
     ) {
-      return notice(
+      notice(
         "Your account is not currently eligible to submit a new reference.",
         "error"
       );
+      return;
     }
 
     const form = event.currentTarget;
@@ -722,47 +826,4 @@
     if (button) button.disabled = true;
 
     const fd = new FormData(form);
-    const reference = String(fd.get("reference") || "").trim();
-    const country =
-      $("payCountry")?.value || currentProfile.country || "";
-    const level = Number($("payLevel")?.value);
-
-    if (!reference) {
-      if (button) button.disabled = false;
-      return notice("Please enter your payment reference.", "error");
-    }
-
-    if (!Number.isInteger(level) || level < 1 || level > 4) {
-      if (button) button.disabled = false;
-      return notice("Please select a valid membership level.", "error");
-    }
-
-    try {
-      const { error } = await db
-        .from("payment_submissions")
-        .insert({
-          user_id: currentUser.id,
-          country,
-          membership_level: level,
-          payment_provider: "Payd",
-          payment_reference: reference,
-          status: "submitted"
-        });
-
-      if (error) throw error;
-
-      notice(
-        "Your reference was submitted. Your account remains locked " +
-        "while the administrator reviews it.",
-        "success"
-      );
-
-      await refreshStatus();
-    } catch (error) {
-      showError(error);
-    } finally {
-      if (button) button.disabled = false;
-    }
-  }
-
-  /* ------------
+    const reference = String(fd.get("ref
