@@ -159,16 +159,18 @@ let authListenerRegistered = false;
       if (fd.get("age_confirmed") !== "on") throw new Error("Please confirm that you are at least 18 years old.");
       const { data, error } = await db.auth.signUp({
         email, password,
+      
         options: { data: { full_name: fullName, phone, country, education_level: education, age_confirmed: true, referral_code: referral || null } }
       });
       if (error) throw error;
-      if (!data.user) { notice("We could not confirm the registration response. Please try logging in or contact support.", "error"); return; }
-      if (!data.session) {
-        switchMode("login");
-        notice("Registration received. Check your email if Supabase requires confirmation, then log in. Your profile should be created by the database trigger.", "success");
-        return;
-      }
-      await routeUser(data.user);
+      if (error) throw error;
+
+if (data.user) {
+  await routeUser(data.user);
+  notice("Registration successful! Continue with SCF activation.", "success");
+} else {
+  throw new Error("Registration could not be completed. Please try again.");
+}
     } catch (error) { showError(error); }
     finally { busy = false; setBusy(button, false); }
   }
