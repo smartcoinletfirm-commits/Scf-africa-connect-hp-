@@ -25,7 +25,7 @@
   let currentProfile = null;
   let dashboardRequest = 0;
   let busy = false;
-
+let authListenerRegistered = false;
   function notice(message, type = "info") {
     const el = $("notice");
     if (!el) { console.log("[SCF]", message); return; }
