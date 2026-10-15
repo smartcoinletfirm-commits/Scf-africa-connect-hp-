@@ -421,8 +421,25 @@ if (data.user) {
     ].forEach(id => {
       $(id)?.addEventListener("click", async () => {
         if (!db) return;
-        const { error } = await db.auth.signOut();
-        if (error) showError(error);
+        const { data: authData, error: authError } =
+  await db.auth.getUser();
+
+if (authError) throw authError;
+
+if (!authData.user || authData.user.id !== currentUser.id) {
+  throw new Error("Your login session has expired. Please sign in again.");
+}
+
+const { error } = await db.from("payment_submissions").insert({
+  user_id: authData.user.id,
+  country: country,
+  membership_level: level,
+  payment_provider: "Payd",
+  payment_reference: reference,
+  status: "submitted"
+});
+
+if (error) throw error;
         else await routeUser(null);
       });
     });
