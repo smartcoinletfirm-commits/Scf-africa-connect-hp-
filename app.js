@@ -12,8 +12,13 @@
     4: "https://app.payd.money/link/scfkl4"
   }};
   const THEME_ORDER = ["sky-blue", "lavender", "forest-green", "rose-pink", "light-mode"];
-  const THEME_INTERVAL = 40 * 60 * 1000;
+  const THEME_INTERVAL = 4 * 60 * 60 * 1000;
   const THEME_KEY = "scf_theme_rotation_started_v1";
+  const REVIEW_DURATION_MS = 6 * 60 * 60 * 1000;
+  const REVIEW_KEY_PREFIX = "scf_review_started_v1:";
+  let reviewTimer = null;
+  let mentorSessionTimer = null;
+  let mentorVideoActive = false;
   const $ = id => document.getElementById(id);
 
   let db = null;
@@ -46,6 +51,7 @@ let authListenerRegistered = false;
     ["authView", "activationView", "pendingView", "dashboardView"].forEach(view => {
       $(view)?.classList.toggle("hidden", view !== id);
     });
+    if (id !== "dashboardView") stopMentorBackgroundVideo();
     clearNotice();
   }
   function switchMode(mode) {
@@ -102,6 +108,7 @@ let authListenerRegistered = false;
   async function routeUser(user) {
     if (!user) {
       currentUser = null; currentProfile = null; dashboardRequest++;
+      if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
       showView("authView"); switchMode("login"); return;
     }
     currentUser = user; currentProfile = null;
@@ -114,19 +121,65 @@ let authListenerRegistered = false;
         return;
       }
       currentProfile = profile;
-      if (profile.account_status === "approved") { showDashboard(profile); return; }
+      if (profile.account_status === "approved") {
+        if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
+        localStorage.removeItem(REVIEW_KEY_PREFIX + user.id);
+        showDashboard(profile); return;
+      }
+
+      // A successful payment-reference submission takes priority over the old profile status.
+      let submittedPayment = null;
+      try {
+        const { data, error } = await db.from("payment_submissions")
+          .select("id,status,created_at")
+          .eq("user_id", user.id)
+          .in("status", ["submitted", "payment_review", "pending"])
+          .order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (!error) submittedPayment = data;
+      } catch (e) { console.warn("Could not read payment review status:", e); }
+
+      if (submittedPayment || localStorage.getItem(REVIEW_KEY_PREFIX + user.id)) {
+        const storedStart = Number(localStorage.getItem(REVIEW_KEY_PREFIX + user.id));
+        const dbStart = submittedPayment?.created_at ? Date.parse(submittedPayment.created_at) : NaN;
+        const startAt = Number.isFinite(dbStart) ? dbStart : (Number.isFinite(storedStart) && storedStart > 0 ? storedStart : Date.now());
+        localStorage.setItem(REVIEW_KEY_PREFIX + user.id, String(startAt));
+        if ($("pendingLabel")) $("pendingLabel").textContent = "Account under system checks and manual approval";
+        showView("pendingView"); startReviewCountdown(startAt); return;
+      }
+
       if (["awaiting_activation", "rejected"].includes(profile.account_status)) {
         showView("activationView"); updatePayLink();
         if (profile.account_status === "rejected") notice("Your submission needs attention. Contact support before making another payment.", "error");
         return;
       }
       if ($("pendingLabel")) $("pendingLabel").textContent = profile.account_status === "payment_review" ? "Payment under review" : "Pending approval";
-      showView("pendingView");
+      showView("pendingView"); startReviewCountdown(Date.now());
     } catch (error) {
       console.error("Profile routing:", error);
       showView("authView");
       notice("Could not load your SCF profile. Check your database permissions and profile record, then try again.", "error");
     }
+  }
+
+  function startReviewCountdown(startAt) {
+    if (reviewTimer) clearInterval(reviewTimer);
+    const tick = () => {
+      const remaining = Math.max(0, REVIEW_DURATION_MS - (Date.now() - startAt));
+      const hours = Math.floor(remaining / 3600000);
+      const minutes = Math.floor((remaining % 3600000) / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      const display = $("reviewCountdown");
+      if (display) display.textContent = [hours, minutes, seconds].map(n => String(n).padStart(2, "0")).join(":");
+      const expired = $("reviewExpired");
+      if (expired) expired.classList.toggle("hidden", remaining > 0);
+      const message = $("reviewMessage");
+      if (message) message.textContent = remaining > 0
+        ? "Your account is under system checks and manual approval. The process usually takes less than six hours. Please keep your login details safe."
+        : "The six-hour review estimate has elapsed and your account is still awaiting manual approval. Please contact the SCF support team for an update.";
+      if (remaining <= 0 && reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
+    };
+    tick();
+    if (Date.now() - startAt < REVIEW_DURATION_MS) reviewTimer = setInterval(tick, 1000);
   }
 
   async function refreshStatus() {
@@ -243,20 +296,110 @@ if (data.user) {
         payment_provider: "Payd", payment_reference: reference, status: "submitted"
       });
       if (error) throw error;
+      const submittedAt = Date.now();
+      localStorage.setItem(REVIEW_KEY_PREFIX + currentUser.id, String(submittedAt));
       form.reset(); updatePayLink();
-      notice("Your payment reference was submitted for manual review. Your account will not be approved automatically.", "success");
-      await refreshStatus();
+      if ($("pendingLabel")) $("pendingLabel").textContent = "Account under system checks and manual approval";
+      showView("pendingView");
+      startReviewCountdown(submittedAt);
+      notice("Payment reference submitted successfully. Your account is now waiting for manual approval.", "success");
     } catch (error) { showError(error); }
     finally { busy = false; setBusy(button, false); }
+  }
+
+  let insightTimer = null;
+  function startInsightPopups() {
+    const messages = [
+      ["World news reminder", "Check trusted news sources and confirm dates before sharing breaking-news claims."],
+      ["Trading discipline", "A trading idea is not a guarantee. Set limits and never risk essential living money."],
+      ["Financial quote", "Small, consistent financial habits can be more valuable than chasing quick profits."],
+      ["Market awareness", "Markets can move quickly. Research independently and understand the risk before trading."],
+      ["SCF safety reminder", "Never share your password or one-time security code with anyone." ]
+    ];
+    let box = $("scfPopupNotice");
+    if (!box) { box = document.createElement("aside"); box.id = "scfPopupNotice"; box.setAttribute("role", "status"); document.body.appendChild(box); }
+    if (insightTimer) clearInterval(insightTimer);
+    let index = 0;
+    const show = () => {
+      if (!$("dashboardView") || $("dashboardView").classList.contains("hidden")) { box.classList.remove("visible"); return; }
+      const [heading, message] = messages[index % messages.length]; index++;
+      box.replaceChildren(); const title = document.createElement("strong"); title.textContent = heading;
+      const body = document.createElement("span"); body.textContent = message; box.append(title, body);
+      box.classList.add("visible");
+      setTimeout(() => box.classList.remove("visible"), 6500);
+    };
+    show(); insightTimer = setInterval(show, 12000);
+  }
+
+  function getKenyaClockParts() {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Africa/Nairobi", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    }).formatToParts(new Date());
+    const hour = Number(parts.find(part => part.type === "hour")?.value || 0);
+    const minute = Number(parts.find(part => part.type === "minute")?.value || 0);
+    return { hour, minute, minutes: hour * 60 + minute };
+  }
+
+  function isMentorSessionTime() {
+    const minutes = getKenyaClockParts().minutes;
+    return (minutes >= 8 * 60 && minutes < 10 * 60) ||
+      (minutes >= 19 * 60 + 50 && minutes < 21 * 60);
+  }
+
+  function updateMentorBackgroundVideo() {
+    const backdrop = $("mentorVideoBackdrop");
+    const video = $("mentorBackgroundVideo");
+    if (!backdrop || !video) return;
+    const dashboard = $("dashboardView");
+    const dashboardVisible = Boolean(currentUser && currentProfile?.account_status === "approved" &&
+      dashboard && !dashboard.classList.contains("hidden"));
+    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const shouldPlay = dashboardVisible && isMentorSessionTime() && !reducedMotion;
+
+    if (shouldPlay) {
+      backdrop.classList.remove("hidden");
+      if (!mentorVideoActive) {
+        mentorVideoActive = true;
+        video.muted = true;
+        video.play().catch(error => console.info("SCF mentorship background video could not autoplay:", error));
+      } else if (video.paused) {
+        video.play().catch(() => {});
+      }
+    } else {
+      backdrop.classList.add("hidden");
+      if (mentorVideoActive || !video.paused) {
+        video.pause();
+        try { video.currentTime = 0; } catch (_) {}
+      }
+      mentorVideoActive = false;
+    }
+  }
+
+  function startMentorBackgroundSchedule() {
+    updateMentorBackgroundVideo();
+    if (!mentorSessionTimer) mentorSessionTimer = window.setInterval(updateMentorBackgroundVideo, 15000);
+  }
+
+  function stopMentorBackgroundVideo() {
+    const backdrop = $("mentorVideoBackdrop");
+    const video = $("mentorBackgroundVideo");
+    if (backdrop) backdrop.classList.add("hidden");
+    if (video) {
+      video.pause();
+      try { video.currentTime = 0; } catch (_) {}
+    }
+    mentorVideoActive = false;
   }
 
   function showDashboard(profile) {
     if (profile?.account_status !== "approved") { showView("pendingView"); return; }
     showView("dashboardView");
+    startMentorBackgroundSchedule();
     if ($("memberName")) $("memberName").textContent = (profile.full_name || profile.email || "Member").split(" ")[0];
     if ($("dashStatus")) $("dashStatus").textContent = profile.account_status;
     if ($("refCode")) $("refCode").textContent = profile.referral_code || "Not assigned";
     if ($("refCount")) $("refCount").textContent = "Referral count not connected";
+    startInsightPopups();
     if ($("copyReferral")) $("copyReferral").disabled = !profile.referral_code;
     if ($("circleFeed")) $("circleFeed").textContent = "Verified circle milestones will appear here when connected.";
     loadDashboardData().catch(error => {
@@ -273,20 +416,28 @@ if (data.user) {
     if (!panel) {
       panel = document.createElement("div"); panel.id = "scfLiveDashboard";
       panel.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
-      dashboard.appendChild(panel);
+      dashboard.insertBefore(panel, dashboard.querySelector(".dash-grid"));
     }
     panel.replaceChildren();
 
     const walletCard = createCard("💰 My Wallet"), walletContent = document.createElement("div");
+    walletCard.classList.add("scf-wallet-card");
     setMessage(walletContent, "Loading wallet…"); walletCard.appendChild(walletContent);
     const tasksCard = createCard("📋 Available Tasks"), tasksContent = document.createElement("div");
     setMessage(tasksContent, "Loading tasks…"); tasksCard.appendChild(tasksContent);
     const withdrawalsCard = createCard("🏦 Withdrawal History"), withdrawalsContent = document.createElement("div");
     setMessage(withdrawalsContent, "Loading withdrawal history…"); withdrawalsCard.appendChild(withdrawalsContent);
-    panel.append(walletCard, tasksCard, withdrawalsCard, createActionButton("↻ Refresh dashboard", () => loadDashboardData().catch(showError)));
+    const insightsCard = createCard("🌍 SCF Insights & Financial Discipline");
+    insightsCard.classList.add("scf-insights-card");
+    const insights = document.createElement("div");
+    ["Market reminder: check reliable sources before acting on financial news.", "Trading discipline: never risk money you cannot afford to lose.", "Build consistently: budget first, save regularly, and avoid guaranteed-profit promises.", "Quote: A good financial decision is one you understand before you make it."].forEach((line, index) => {
+      const item = createText(line); item.className = "scf-insight-item"; insights.appendChild(item);
+    });
+    insightsCard.appendChild(insights);
+    panel.append(walletCard, insightsCard, tasksCard, withdrawalsCard, createActionButton("↻ Refresh dashboard", () => loadDashboardData().catch(showError)));
 
     const results = await Promise.all([
-      db.from("wallets").select("currency,available_balance,reserved_balance,total_withdrawn").eq("user_id", userId).maybeSingle(),
+      db.from("wallets").select("currency,available,reserved,total_withdrawn").eq("user_id", userId).maybeSingle(),
       db.from("tasks").select("id,title,description,task_type,reward_points,reward_kes,requires_review").eq("is_active", true).order("created_at", { ascending: false }),
       db.from("withdrawal_requests").select("id,amount,currency,status,created_at,admin_note").eq("user_id", userId).order("created_at", { ascending: false }).limit(10)
     ]);
@@ -296,12 +447,15 @@ if (data.user) {
     walletContent.replaceChildren();
     if (walletResult.error) {
       setMessage(walletContent, "Wallet unavailable. Check its SELECT policy.");
+      const headline = $("walletHeadline"); if (headline) headline.textContent = "Unavailable";
       console.error("Wallet:", walletResult.error);
-    } else if (!walletResult.data) setMessage(walletContent, "No wallet record found. Contact support.");
+    } else if (!walletResult.data) { setMessage(walletContent, "No wallet record found. Contact support."); const headline = $("walletHeadline"); if (headline) headline.textContent = "Not found"; }
     else {
       const wallet = walletResult.data, currency = wallet.currency || "KES";
-      walletContent.append(createText("Available balance"), createText(money(wallet.available_balance, currency)),
-        createText("Reserved: " + money(wallet.reserved_balance, currency)),
+      const headline = $("walletHeadline"); if (headline) headline.textContent = money(wallet.available, currency);
+      const balance = createText(money(wallet.available, currency)); balance.className = "scf-wallet-balance";
+      walletContent.append(createText("Available balance"), balance,
+        createText("Reserved: " + money(wallet.reserved, currency)),
         createText("Total withdrawn: " + money(wallet.total_withdrawn, currency)));
     }
 
@@ -345,6 +499,8 @@ if (data.user) {
       const { error } = await db.auth.signOut();
       if (error) throw error;
       currentUser = null; currentProfile = null; dashboardRequest++;
+      if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
+      if (insightTimer) { clearInterval(insightTimer); insightTimer = null; }
       showView("authView"); switchMode("login");
       notice("You have been logged out.", "success");
     } catch (error) { showError(error); }
@@ -414,121 +570,17 @@ if (data.user) {
     $("checkStatus")?.addEventListener("click", refreshStatus);
     $("checkPending")?.addEventListener("click", refreshStatus);
 
-    [
-      "logoutActivation",
-      "logoutPending",
-      "dashLogout"
-    ].forEach(id => {
-      $(id)?.addEventListener("click", async () => {
-        if (!db) return;
-        const { data: authData, error: authError } =
-  await db.auth.getUser();
-
-if (authError) throw authError;
-
-if (!authData.user || authData.user.id !== currentUser.id) {
-  throw new Error("Your login session has expired. Please sign in again.");
-}
-
-const { error } = await db.from("payment_submissions").insert({
-  user_id: authData.user.id,
-  country: country,
-  membership_level: level,
-  payment_provider: "Payd",
-  payment_reference: reference,
-  status: "submitted"
-});
-
-if (error) throw error;
-        else await routeUser(null);
-      });
+    ["logoutActivation", "logoutPending", "dashLogout"].forEach(id => {
+      $(id)?.addEventListener("click", logout);
     });
 
     $("copyReferral")?.addEventListener("click", copyReferral);
 
-    $("shareInvite")?.addEventListener("click", shareReferral);
+    $("shareInvite")?.addEventListener("click", shareInvite);
 
     $("showSupport")?.addEventListener("click", contactSupport);
 
     $("resetPassword")?.addEventListener("click", resetPassword);
-  }
-
-  /* ---------------- REFERRALS AND SUPPORT ---------------- */
-
-  async function copyReferral() {
-    const code = currentProfile?.referral_code;
-    if (!code) {
-      notice("Your referral code has not been assigned yet.", "error");
-      return;
-    }
-
-    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
-
-    try {
-      await navigator.clipboard.writeText(link);
-      notice("Referral link copied!", "success");
-    } catch {
-      notice(link, "info");
-    }
-  }
-
-  async function shareReferral() {
-    const code = currentProfile?.referral_code;
-    if (!code) {
-      notice("Your referral code has not been assigned yet.", "error");
-      return;
-    }
-
-    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
-    const message = `Join SCF Africa Connect — Connect, Grow, Learn and Earn: ${link}`;
-
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: "SCF Africa Connect",
-          text: message
-        });
-      } catch (error) {
-        if (error?.name !== "AbortError") notice(message);
-      }
-    } else {
-      await copyReferral();
-    }
-  }
-
-  function contactSupport() {
-    const subject = encodeURIComponent("SCF Africa Connect support");
-    const body = encodeURIComponent(
-      "Hello SCF Support,\n\nI need help with my account.\n\n"
-    );
-
-    location.href =
-      `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
-  }
-
-  async function resetPassword() {
-    if (!db) {
-      notice("Supabase did not load.", "error");
-      return;
-    }
-
-    const email = String(
-      $("loginForm")?.elements.email?.value || ""
-    ).trim().toLowerCase();
-
-    if (!email) {
-      notice("Enter your email address first.", "error");
-      return;
-    }
-
-    const redirectTo = `${location.origin}${location.pathname}`;
-
-    const { error } = await db.auth.resetPasswordForEmail(email, {
-      redirectTo
-    });
-
-    if (error) showError(error);
-    else notice("If the email is registered, a password-reset link will be sent.", "success");
   }
 
   /* ---------------- STARTUP ---------------- */
@@ -572,3 +624,4 @@ if (error) throw error;
     startApp();
   }
 })();
+  
