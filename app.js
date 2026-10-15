@@ -240,7 +240,7 @@ if (data.user) {
       if (!PAYD_LINKS[country]?.[level]) throw new Error("A payment link is not configured for this country and level. Contact support before paying.");
       const { error } = await db.from("payment_submissions").insert({
         user_id: currentUser.id, country, membership_level: level,
-        payment_provider: "Payd", payment_reference: reference, status: "pending"
+        payment_provider: "Payd", payment_reference: reference, status: "submitted"
       });
       if (error) throw error;
       form.reset(); updatePayLink();
