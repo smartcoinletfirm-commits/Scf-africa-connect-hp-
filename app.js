@@ -12,13 +12,11 @@
     4: "https://app.payd.money/link/scfkl4"
   }};
   const THEME_ORDER = ["sky-blue", "lavender", "forest-green", "rose-pink", "light-mode"];
-  const THEME_INTERVAL = 4 * 60 * 60 * 1000;
+  const THEME_INTERVAL = 40 * 60 * 1000;
   const THEME_KEY = "scf_theme_rotation_started_v1";
   const REVIEW_DURATION_MS = 6 * 60 * 60 * 1000;
   const REVIEW_KEY_PREFIX = "scf_review_started_v1:";
   let reviewTimer = null;
-  let mentorSessionTimer = null;
-  let mentorVideoActive = false;
   const $ = id => document.getElementById(id);
 
   let db = null;
@@ -51,7 +49,6 @@ let authListenerRegistered = false;
     ["authView", "activationView", "pendingView", "dashboardView"].forEach(view => {
       $(view)?.classList.toggle("hidden", view !== id);
     });
-    if (id !== "dashboardView") stopMentorBackgroundVideo();
     clearNotice();
   }
   function switchMode(mode) {
@@ -331,70 +328,9 @@ if (data.user) {
     show(); insightTimer = setInterval(show, 12000);
   }
 
-  function getKenyaClockParts() {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Africa/Nairobi", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
-    }).formatToParts(new Date());
-    const hour = Number(parts.find(part => part.type === "hour")?.value || 0);
-    const minute = Number(parts.find(part => part.type === "minute")?.value || 0);
-    return { hour, minute, minutes: hour * 60 + minute };
-  }
-
-  function isMentorSessionTime() {
-    const minutes = getKenyaClockParts().minutes;
-    return (minutes >= 8 * 60 && minutes < 10 * 60) ||
-      (minutes >= 19 * 60 + 50 && minutes < 21 * 60);
-  }
-
-  function updateMentorBackgroundVideo() {
-    const backdrop = $("mentorVideoBackdrop");
-    const video = $("mentorBackgroundVideo");
-    if (!backdrop || !video) return;
-    const dashboard = $("dashboardView");
-    const dashboardVisible = Boolean(currentUser && currentProfile?.account_status === "approved" &&
-      dashboard && !dashboard.classList.contains("hidden"));
-    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const shouldPlay = dashboardVisible && isMentorSessionTime() && !reducedMotion;
-
-    if (shouldPlay) {
-      backdrop.classList.remove("hidden");
-      if (!mentorVideoActive) {
-        mentorVideoActive = true;
-        video.muted = true;
-        video.play().catch(error => console.info("SCF mentorship background video could not autoplay:", error));
-      } else if (video.paused) {
-        video.play().catch(() => {});
-      }
-    } else {
-      backdrop.classList.add("hidden");
-      if (mentorVideoActive || !video.paused) {
-        video.pause();
-        try { video.currentTime = 0; } catch (_) {}
-      }
-      mentorVideoActive = false;
-    }
-  }
-
-  function startMentorBackgroundSchedule() {
-    updateMentorBackgroundVideo();
-    if (!mentorSessionTimer) mentorSessionTimer = window.setInterval(updateMentorBackgroundVideo, 15000);
-  }
-
-  function stopMentorBackgroundVideo() {
-    const backdrop = $("mentorVideoBackdrop");
-    const video = $("mentorBackgroundVideo");
-    if (backdrop) backdrop.classList.add("hidden");
-    if (video) {
-      video.pause();
-      try { video.currentTime = 0; } catch (_) {}
-    }
-    mentorVideoActive = false;
-  }
-
   function showDashboard(profile) {
     if (profile?.account_status !== "approved") { showView("pendingView"); return; }
     showView("dashboardView");
-    startMentorBackgroundSchedule();
     if ($("memberName")) $("memberName").textContent = (profile.full_name || profile.email || "Member").split(" ")[0];
     if ($("dashStatus")) $("dashStatus").textContent = profile.account_status;
     if ($("refCode")) $("refCode").textContent = profile.referral_code || "Not assigned";
@@ -416,7 +352,7 @@ if (data.user) {
     if (!panel) {
       panel = document.createElement("div"); panel.id = "scfLiveDashboard";
       panel.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
-      dashboard.insertBefore(panel, dashboard.querySelector(".dash-grid"));
+      dashboard.appendChild(panel);
     }
     panel.replaceChildren();
 
@@ -437,7 +373,7 @@ if (data.user) {
     panel.append(walletCard, insightsCard, tasksCard, withdrawalsCard, createActionButton("↻ Refresh dashboard", () => loadDashboardData().catch(showError)));
 
     const results = await Promise.all([
-      db.from("wallets").select("currency,available,reserved,total_withdrawn").eq("user_id", userId).maybeSingle(),
+      db.from("wallets").select("currency,available_balance,reserved_balance,total_withdrawn").eq("user_id", userId).maybeSingle(),
       db.from("tasks").select("id,title,description,task_type,reward_points,reward_kes,requires_review").eq("is_active", true).order("created_at", { ascending: false }),
       db.from("withdrawal_requests").select("id,amount,currency,status,created_at,admin_note").eq("user_id", userId).order("created_at", { ascending: false }).limit(10)
     ]);
@@ -452,10 +388,10 @@ if (data.user) {
     } else if (!walletResult.data) { setMessage(walletContent, "No wallet record found. Contact support."); const headline = $("walletHeadline"); if (headline) headline.textContent = "Not found"; }
     else {
       const wallet = walletResult.data, currency = wallet.currency || "KES";
-      const headline = $("walletHeadline"); if (headline) headline.textContent = money(wallet.available, currency);
-      const balance = createText(money(wallet.available, currency)); balance.className = "scf-wallet-balance";
+      const headline = $("walletHeadline"); if (headline) headline.textContent = money(wallet.available_balance, currency);
+      const balance = createText(money(wallet.available_balance, currency)); balance.className = "scf-wallet-balance";
       walletContent.append(createText("Available balance"), balance,
-        createText("Reserved: " + money(wallet.reserved, currency)),
+        createText("Reserved: " + money(wallet.reserved_balance, currency)),
         createText("Total withdrawn: " + money(wallet.total_withdrawn, currency)));
     }
 
@@ -624,4 +560,3 @@ if (data.user) {
     startApp();
   }
 })();
-  
