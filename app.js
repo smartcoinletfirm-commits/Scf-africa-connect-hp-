@@ -345,90 +345,399 @@ if (data.user) {
   }
 
   async function loadDashboardData() {
-    if (!db || !currentUser || !currentProfile || currentProfile.account_status !== "approved") return;
-    const userId = currentUser.id, requestId = ++dashboardRequest, dashboard = $("dashboardView");
-    if (!dashboard) return;
-    let panel = $("scfLiveDashboard");
-    if (!panel) {
-      panel = document.createElement("div"); panel.id = "scfLiveDashboard";
-      panel.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
-      dashboard.appendChild(panel);
+  if (
+    !db ||
+    !currentUser ||
+    !currentProfile ||
+    currentProfile.account_status !== "approved"
+  ) return;
+
+  const userId = currentUser.id;
+  const requestId = ++dashboardRequest;
+  const dashboard = $("dashboardView");
+
+  if (!dashboard) return;
+
+  let panel = $("scfLiveDashboard");
+
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "scfLiveDashboard";
+    panel.style.cssText =
+      "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
+    dashboard.appendChild(panel);
+  }
+
+  panel.replaceChildren();
+
+  // Wallet
+  const walletCard = createCard("💰 My Wallet");
+  const walletContent = document.createElement("div");
+  walletCard.classList.add("scf-wallet-card");
+  setMessage(walletContent, "Loading wallet…");
+  walletCard.appendChild(walletContent);
+
+  // Referral activity
+  const referralsCard = createCard("🤝 My Referral Circle");
+  const referralsContent = document.createElement("div");
+  setMessage(referralsContent, "Loading referrals…");
+  referralsCard.appendChild(referralsContent);
+
+  // Tasks
+  const tasksCard = createCard("📋 Available Tasks");
+  const tasksContent = document.createElement("div");
+  setMessage(tasksContent, "Loading tasks…");
+  tasksCard.appendChild(tasksContent);
+
+  // Withdrawals
+  const withdrawalsCard = createCard("🏦 Withdrawal History");
+  const withdrawalsContent = document.createElement("div");
+  setMessage(withdrawalsContent, "Loading withdrawal history…");
+  withdrawalsCard.appendChild(withdrawalsContent);
+
+  // Insights
+  const insightsCard = createCard("🌍 SCF Insights & Financial Discipline");
+  insightsCard.classList.add("scf-insights-card");
+
+  const insights = document.createElement("div");
+
+  [
+    "Market reminder: check reliable sources before acting on financial news.",
+    "Trading discipline: never risk money you cannot afford to lose.",
+    "Build consistently: budget first, save regularly, and avoid guaranteed-profit promises.",
+    "Quote: A good financial decision is one you understand before you make it."
+  ].forEach(line => {
+    const item = createText(line);
+    item.className = "scf-insight-item";
+    insights.appendChild(item);
+  });
+
+  insightsCard.appendChild(insights);
+
+  panel.append(
+    walletCard,
+    referralsCard,
+    insightsCard,
+    tasksCard,
+    withdrawalsCard,
+    createActionButton(
+      "↻ Refresh dashboard",
+      () => loadDashboardData().catch(showError)
+    )
+  );
+
+  // Load all four data sources
+  const results = await Promise.all([
+    db.from("wallets")
+      .select("currency,available_balance,reserved_balance,total_withdrawn")
+      .eq("user_id", userId)
+      .maybeSingle(),
+
+    db.from("tasks")
+      .select("id,title,description,task_type,reward_points,reward_kes,requires_review")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false }),
+
+    db.from("withdrawal_requests")
+      .select("id,amount,currency,status,created_at,admin_note")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(10),
+
+    db.from("referrals")
+      .select("id,status,created_at,eligible_at,rewarded_at")
+      .eq("referrer_id", userId)
+      .order("created_at", { ascending: false })
+  ]);
+
+  // Do not let an old request update another user's dashboard
+  if (
+    requestId !== dashboardRequest ||
+    !currentUser ||
+    currentUser.id !== userId ||
+    currentProfile?.account_status !== "approved"
+  ) return;
+
+  const [
+    walletResult,
+    tasksResult,
+    withdrawalsResult,
+    referralsResult
+  ] = results;
+
+  // ---------------- WALLET ----------------
+
+  walletContent.replaceChildren();
+
+  if (walletResult.error) {
+    setMessage(walletContent, "Wallet unavailable. Check its SELECT policy.");
+    const headline = $("walletHeadline");
+    if (headline) headline.textContent = "Unavailable";
+    console.error("Wallet:", walletResult.error);
+  } else if (!walletResult.data) {
+    setMessage(walletContent, "No wallet record found. Contact support.");
+    const headline = $("walletHeadline");
+    if (headline) headline.textContent = "Not found";
+  } else {
+    const wallet = walletResult.data;
+    const currency = wallet.currency || "KES";
+    const headline = $("walletHeadline");
+
+    if (headline) {
+      headline.textContent = money(wallet.available_balance, currency);
     }
-    panel.replaceChildren();
 
-    const walletCard = createCard("💰 My Wallet"), walletContent = document.createElement("div");
-    walletCard.classList.add("scf-wallet-card");
-    setMessage(walletContent, "Loading wallet…"); walletCard.appendChild(walletContent);
-    const tasksCard = createCard("📋 Available Tasks"), tasksContent = document.createElement("div");
-    setMessage(tasksContent, "Loading tasks…"); tasksCard.appendChild(tasksContent);
-    const withdrawalsCard = createCard("🏦 Withdrawal History"), withdrawalsContent = document.createElement("div");
-    setMessage(withdrawalsContent, "Loading withdrawal history…"); withdrawalsCard.appendChild(withdrawalsContent);
-    const insightsCard = createCard("🌍 SCF Insights & Financial Discipline");
-    insightsCard.classList.add("scf-insights-card");
-    const insights = document.createElement("div");
-    ["Market reminder: check reliable sources before acting on financial news.", "Trading discipline: never risk money you cannot afford to lose.", "Build consistently: budget first, save regularly, and avoid guaranteed-profit promises.", "Quote: A good financial decision is one you understand before you make it."].forEach((line, index) => {
-      const item = createText(line); item.className = "scf-insight-item"; insights.appendChild(item);
-    });
-    insightsCard.appendChild(insights);
-    panel.append(walletCard, insightsCard, tasksCard, withdrawalsCard, createActionButton("↻ Refresh dashboard", () => loadDashboardData().catch(showError)));
+    const balance = createText(
+      money(wallet.available_balance, currency)
+    );
+    balance.className = "scf-wallet-balance";
 
-    const results = await Promise.all([
-      db.from("wallets").select("currency,available_balance,reserved_balance,total_withdrawn").eq("user_id", userId).maybeSingle(),
-      db.from("tasks").select("id,title,description,task_type,reward_points,reward_kes,requires_review").eq("is_active", true).order("created_at", { ascending: false }),
-      db.from("withdrawal_requests").select("id,amount,currency,status,created_at,admin_note").eq("user_id", userId).order("created_at", { ascending: false }).limit(10)
-    ]);
-    if (requestId !== dashboardRequest || !currentUser || currentUser.id !== userId || currentProfile?.account_status !== "approved") return;
-    const [walletResult, tasksResult, withdrawalsResult] = results;
+    walletContent.append(
+      createText("Available balance"),
+      balance,
+      createText(
+        "Reserved: " + money(wallet.reserved_balance, currency)
+      ),
+      createText(
+        "Total withdrawn: " + money(wallet.total_withdrawn, currency)
+      )
+    );
+  }
 
-    walletContent.replaceChildren();
-    if (walletResult.error) {
-      setMessage(walletContent, "Wallet unavailable. Check its SELECT policy.");
-      const headline = $("walletHeadline"); if (headline) headline.textContent = "Unavailable";
-      console.error("Wallet:", walletResult.error);
-    } else if (!walletResult.data) { setMessage(walletContent, "No wallet record found. Contact support."); const headline = $("walletHeadline"); if (headline) headline.textContent = "Not found"; }
-    else {
-      const wallet = walletResult.data, currency = wallet.currency || "KES";
-      const headline = $("walletHeadline"); if (headline) headline.textContent = money(wallet.available_balance, currency);
-      const balance = createText(money(wallet.available_balance, currency)); balance.className = "scf-wallet-balance";
-      walletContent.append(createText("Available balance"), balance,
-        createText("Reserved: " + money(wallet.reserved_balance, currency)),
-        createText("Total withdrawn: " + money(wallet.total_withdrawn, currency)));
+  // ---------------- REFERRALS ----------------
+
+  referralsContent.replaceChildren();
+
+  if (referralsResult.error) {
+    setMessage(
+      referralsContent,
+      "Referral records could not be loaded. Check the referrals SELECT policy."
+    );
+    console.error("Referrals:", referralsResult.error);
+
+    if ($("refCount")) {
+      $("refCount").textContent = "Unavailable";
     }
 
-    tasksContent.replaceChildren();
-    if (tasksResult.error) {
-      setMessage(tasksContent, "Tasks unavailable. Check the tasks SELECT policy.");
-      console.error("Tasks:", tasksResult.error);
-    } else if (!tasksResult.data?.length) setMessage(tasksContent, "No active tasks available.");
-    else tasksResult.data.forEach(task => {
+    if ($("circleFeed")) {
+      $("circleFeed").textContent =
+        "Referral activity is temporarily unavailable.";
+    }
+  } else {
+    const allReferrals = referralsResult.data || [];
+
+    // Cancelled referrals are excluded from the registration count.
+    const validReferrals = allReferrals.filter(
+      referral => referral.status !== "cancelled"
+    );
+
+    const referralCount = validReferrals.length;
+
+    if ($("refCount")) {
+      $("refCount").textContent = String(referralCount);
+    }
+
+    const countText = createText(
+      "Registered referrals: " + referralCount
+    );
+    countText.style.fontWeight = "700";
+
+    const milestoneTitle = createText(
+      "Three-invite milestone"
+    );
+    milestoneTitle.style.fontWeight = "700";
+
+    const progress = Math.min(referralCount, 3);
+
+    const progressText = createText(
+      `${progress} of 3 referrals recorded`
+    );
+
+    const progressTrack = document.createElement("div");
+    progressTrack.style.cssText =
+      "height:9px;background:var(--line);border-radius:99px;overflow:hidden;margin:8px 0 14px;";
+
+    const progressBar = document.createElement("div");
+    progressBar.style.cssText =
+      `height:100%;width:${(progress / 3) * 100}%;background:var(--accent,#16834a);border-radius:99px;transition:width .3s ease;`;
+
+    progressTrack.appendChild(progressBar);
+
+    const milestoneMessage = createText(
+      referralCount >= 3
+        ? "Three or more referrals are recorded. Any bonus or milestone reward remains subject to SCF verification and approval."
+        : `Record ${3 - referralCount} more referral${3 - referralCount === 1 ? "" : "s"} to reach the three-invite milestone.`
+    );
+
+    referralsContent.append(
+      countText,
+      milestoneTitle,
+      progressText,
+      progressTrack,
+      milestoneMessage
+    );
+
+    // Display recent referral records and their actual database statuses.
+    const recentTitle = document.createElement("h4");
+    recentTitle.textContent = "Recent referral activity";
+    recentTitle.style.marginTop = "18px";
+    referralsContent.appendChild(recentTitle);
+
+    const recentReferrals = validReferrals.slice(0, 5);
+
+    if (!recentReferrals.length) {
+      referralsContent.appendChild(
+        createText(
+          "No referrals recorded yet. Share your personal SCF invite link to get started."
+        )
+      );
+    } else {
+      recentReferrals.forEach(referral => {
+        const item = document.createElement("article");
+        item.style.cssText =
+          "padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
+
+        const status = document.createElement("strong");
+        status.textContent =
+          "Status: " + String(referral.status || "unknown");
+
+        const date = createText(
+          referral.created_at
+            ? "Registered: " +
+                new Date(referral.created_at).toLocaleString()
+            : "Registration date unavailable"
+        );
+
+        item.append(status, date);
+
+        if (referral.eligible_at) {
+          item.appendChild(
+            createText(
+              "Eligible date: " +
+              new Date(referral.eligible_at).toLocaleString()
+            )
+          );
+        }
+
+        if (referral.rewarded_at) {
+          item.appendChild(
+            createText(
+              "Reward recorded: " +
+              new Date(referral.rewarded_at).toLocaleString()
+            )
+          );
+        }
+
+        referralsContent.appendChild(item);
+      });
+    }
+
+    // Update the existing circle feed on the main dashboard.
+    const circleFeed = $("circleFeed");
+
+    if (circleFeed) {
+      circleFeed.replaceChildren();
+
+      const heading = document.createElement("strong");
+      heading.textContent = "SCF Circle Progress";
+
+      const summary = createText(
+        `${referralCount} referral${referralCount === 1 ? "" : "s"} recorded.`
+      );
+
+      const milestone = createText(
+        referralCount >= 3
+          ? "Three-invite milestone reached; reward eligibility requires verification."
+          : `${3 - referralCount} more referral${3 - referralCount === 1 ? "" : "s"} to reach the three-invite milestone.`
+      );
+
+      circleFeed.append(heading, summary, milestone);
+    }
+  }
+
+  // ---------------- TASKS ----------------
+
+  tasksContent.replaceChildren();
+
+  if (tasksResult.error) {
+    setMessage(
+      tasksContent,
+      "Tasks unavailable. Check the tasks SELECT policy."
+    );
+    console.error("Tasks:", tasksResult.error);
+  } else if (!tasksResult.data?.length) {
+    setMessage(tasksContent, "No active tasks available.");
+  } else {
+    tasksResult.data.forEach(task => {
       const article = document.createElement("article");
-      article.style.cssText = "padding:13px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;";
-      const title = document.createElement("h4"); title.textContent = task.title;
-      article.append(title, createText(task.description || "No description provided."),
+      article.style.cssText =
+        "padding:13px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;";
+
+      const title = document.createElement("h4");
+      title.textContent = task.title;
+
+      article.append(
+        title,
+        createText(task.description || "No description provided."),
         createText(`${Number(task.reward_points || 0)} points`),
         createText("Cash reward: " + money(task.reward_kes || 0, "KES")),
-        createText(task.requires_review ? "Completion requires administrator review." : "Completion rules are not configured."),
-        createText("Task completion is not enabled yet."));
-      tasksContent.appendChild(article);
-    });
+        createText(
+          task.requires_review
+            ? "Completion requires administrator review."
+            : "Completion rules are not configured."
+        ),
+        createText("Task completion is not enabled yet.")
+      );
 
-    withdrawalsContent.replaceChildren();
-    if (withdrawalsResult.error) {
-      setMessage(withdrawalsContent, "Withdrawal history unavailable. Check its SELECT policy.");
-      console.error("Withdrawals:", withdrawalsResult.error);
-    } else if (!withdrawalsResult.data?.length) setMessage(withdrawalsContent, "You have no withdrawal requests yet.");
-    else withdrawalsResult.data.forEach(request => {
-      const item = document.createElement("article");
-      item.style.cssText = "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
-      const amount = document.createElement("strong");
-      amount.textContent = money(request.amount, request.currency || "KES");
-      item.append(amount, createText("Status: " + (request.status || "unknown")),
-        createText(request.created_at ? "Requested: " + new Date(request.created_at).toLocaleString() : "Request date unavailable"));
-      if (request.admin_note) item.appendChild(createText("Admin note: " + request.admin_note));
-      withdrawalsContent.appendChild(item);
+      tasksContent.appendChild(article);
     });
   }
 
+  // ---------------- WITHDRAWALS ----------------
+
+  withdrawalsContent.replaceChildren();
+
+  if (withdrawalsResult.error) {
+    setMessage(
+      withdrawalsContent,
+      "Withdrawal history unavailable. Check its SELECT policy."
+    );
+    console.error("Withdrawals:", withdrawalsResult.error);
+  } else if (!withdrawalsResult.data?.length) {
+    setMessage(withdrawalsContent, "You have no withdrawal requests yet.");
+  } else {
+    withdrawalsResult.data.forEach(request => {
+      const item = document.createElement("article");
+      item.style.cssText =
+        "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
+
+      const amount = document.createElement("strong");
+      amount.textContent = money(
+        request.amount,
+        request.currency || "KES"
+      );
+
+      item.append(
+        amount,
+        createText("Status: " + (request.status || "unknown")),
+        createText(
+          request.created_at
+            ? "Requested: " + new Date(request.created_at).toLocaleString()
+            : "Request date unavailable"
+        )
+      );
+
+      if (request.admin_note) {
+        item.appendChild(
+          createText("Admin note: " + request.admin_note)
+        );
+      }
+
+      withdrawalsContent.appendChild(item);
+    });
+  }
+  }
+    
   async function logout() {
     try {
       requireDatabase();
