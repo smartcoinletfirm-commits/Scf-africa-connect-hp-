@@ -631,6 +631,279 @@ if (data.user) {
       console.error("Withdrawals:", withdrawalsResult.error);
     } else if (!withdrawalsResult.data?.length) setMessage(withdrawalsContent, "You have no withdrawal requests yet.");
     else withdrawalsResult.data.forEach(request => {
+      const item = document.createElement("article"); item.className = "sale-request-item";
+      const heading = document.createElement("strong"); heading.textContent = `${r.full_name || "Member"} · Level ${r.account_level} · ${money(r.listing_price)}`;
+      item.append(heading, createText(`${r.email || "No email"} · Submitted ${new Date(r.created_at).toLocaleString()}`), createText(`Status: ${r.status.replaceAll("_", " ")}`));
+      list.appendChild(item);
+    });
+  }
+
+  function updateCosmicDayNight() {
+    const sky = $("cosmicSky");
+    if (!sky) return;
+    const hour = new Date().getHours();
+    sky.classList.toggle("night", hour >= 18 || hour < 6);
+    sky.setAttribute("aria-label", hour >= 18 || hour < 6 ? "Night sky with moon and spinning Earth" : "Day sky with sun and spinning Earth");
+  }
+
+  function showDashboard(profile) {
+    if (profile?.account_status !== "approved") { showView("pendingView"); return; }
+    showView("dashboardView");
+    if ($("memberName")) $("memberName").textContent = (profile.full_name || profile.email || "Member").split(" ")[0];
+    if ($("dashStatus")) $("dashStatus").textContent = profile.account_status;
+    if ($("refCode")) $("refCode").textContent = profile.referral_code || "Not assigned";
+    if ($("refCount")) $("refCount").textContent = "Invite friends and build your Scholarbrige Circle";
+    startInsightPopups();
+    if ($("copyReferral")) $("copyReferral").disabled = !profile.referral_code;
+    if ($("circleFeed")) $("circleFeed").textContent = "Verified community milestones and referral achievements will be shared here.";
+    if (profile.role === "admin") {
+      loadAdminActivationQueue().catch(error => console.error("Activation queue:", error));
+      loadAdminSaleQueue().catch(error => console.error("Sale queue:", error));
+      if (adminQueueTimer) clearInterval(adminQueueTimer);
+      adminQueueTimer = setInterval(() => { loadAdminActivationQueue().catch(error => console.error("Activation queue:", error)); loadAdminSaleQueue().catch(error => console.error("Sale queue:", error)); }, 20000);
+    } else {
+      $("adminActivationPanel")?.classList.add("hidden");
+      if (adminQueueTimer) { clearInterval(adminQueueTimer); adminQueueTimer = null; }
+    }
+    loadDashboardData().catch(error => {
+      console.error("Dashboard load error:", error);
+      notice("Your dashboard opened, but some information could not be loaded. Use Refresh dashboard to try again.", "error");
+    });
+  }
+
+  async function loadDashboardData() {
+    if (!db || !currentUser || !currentProfile || currentProfile.account_status !== "approved") return;
+    const userId = currentUser.id, requestId = ++dashboardRequest, dashboard = $("dashboardView");
+    if (!dashboard) return;
+    let panel = $("scfLiveDashboard");
+    if (!panel) {
+      panel = document.createElement("div"); panel.id = "scfLiveDashboard";
+      panel.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
+      dashboard.appendChild(panel);
+    }
+    panel.replaceChildren();
+
+    const walletCard = createCard("💰 My Wallet"), walletContent = document.createElement("div");
+    walletCard.classList.add("scf-wallet-card");
+    setMessage(walletContent, "Loading wallet…"); walletCard.appendChild(walletContent);
+    const tasksCard = createCard("📋 Available Tasks"), tasksContent = document.createElement("div");
+    setMessage(tasksContent, "Loading tasks…"); tasksCard.appendChild(tasksContent);
+    const withdrawalsCard = createCard("🏦 Withdrawal History"), withdrawalsContent = document.createElement("div");
+    setMessage(withdrawalsContent, "Loading withdrawal history…"); withdrawalsCard.appendChild(withdrawalsContent);
+    const insightsCard = createCard("✍️ Scholarbrige Learning Tips");
+    insightsCard.classList.add("scf-insights-card");
+    const insights = document.createElement("div");
+    ["Market reminder: check reliable sources before acting on financial news.", "Trading discipline: never risk money you cannot afford to lose.", "Build consistently: budget first, save regularly, and avoid guaranteed-profit promises.", "Quote: A good financial decision is one you understand before you make it."].forEach((line, index) => {
+      const item = createText(line); item.className = "scf-insight-item"; insights.appendChild(item);
+    });
+    insightsCard.appendChild(insights);
+    panel.append(walletCard, insightsCard, tasksCard, withdrawalsCard, createActionButton("↻ Refresh dashboard", () => loadDashboardData().catch(showError)));
+
+    const results = await Promise.all([
+      db.from("wallets").select("currency,available_balance,reserved_balance,total_withdrawn").eq("user_id", userId).maybeSingle(),
+      db.from("tasks").select("id,title,description,task_type,reward_points,reward_kes,requires_review").eq("is_active", true).order("created_at", { ascending: false }),
+      db.from("withdrawal_requests").select("id,amount,currency,status,created_at,admin_note").eq("user_id", userId).order("created_at", { ascending: false }).limit(10)
+    ]);
+    if (requestId !== dashboardRequest || !currentUser || currentUser.id !== userId || currentProfile?.account_status !== "approved") return;
+    const [walletResult, tasksResult, withdrawalsResult] = results;
+
+    walletContent.replaceChildren();
+    if (walletResult.error) {
+      setMessage(walletContent, "Wallet unavailable. Check its SELECT policy.");
+      const headline = $("walletHeadline"); if (headline) headline.textContent = "Unavailable";
+      console.error("Wallet:", walletResult.error);
+    } else if (!walletResult.data) { setMessage(walletContent, "No wallet record found. Contact support."); const headline = $("walletHeadline"); if (headline) headline.textContent = "Not found"; }
+    else {
+      const wallet = walletResult.data, currency = wallet.currency || "KES";
+      const headline = $("walletHeadline"); if (headline) headline.textContent = money(wallet.available_balance, currency);
+      const balance = createText(money(wallet.available_balance, currency)); balance.className = "scf-wallet-balance";
+      walletContent.append(createText("Available balance"), balance,
+        createText("Reserved: " + money(wallet.reserved_balance, currency)),
+        createText("Total withdrawn: " + money(wallet.total_withdrawn, currency)));
+    }
+
+    tasksContent.replaceChildren();
+    if (tasksResult.error) {
+      setMessage(tasksContent, "Tasks unavailable. Check the tasks SELECT policy.");
+      console.error("Tasks:", tasksResult.error);
+    } else if (!tasksResult.data?.length) setMessage(tasksContent, "No active tasks available.");
+    else tasksResult.data.forEach(task => {
+      const article = document.createElement("article");
+      article.style.cssText = "padding:13px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;";
+      const title = document.createElement("h4"); title.textContent = task.title;
+      article.append(title, createText(task.description || "No description provided."),
+        createText(`${Number(task.reward_points || 0)} points`),
+        createText("Cash reward: " + money(task.reward_kes || 0, "KES")),
+        createText(task.requires_review ? "Completion requires administrator review." : "Completion rules are not configured."),
+        createText("Task completion is not enabled yet."));
+      tasksContent.appendChild(article);
+    });
+
+    withdrawalsContent.replaceChildren();
+    if (withdrawalsResult.error) {
+      setMessage(withdrawalsContent, "Withdrawal history unavailable. Check its SELECT policy.");
+      console.error("Withdrawals:", withdrawalsResult.error);
+    } else if (!withdrawalsResult.data?.length) setMessage(withdrawalsContent, "You have no withdrawal requests yet.");
+    else withdrawalsResult.data.forEach(request => {
       const item = document.createElement("article");
       item.style.cssText = "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
-      c
+      const amount = document.createElement("strong");
+      amount.textContent = money(request.amount, request.currency || "KES");
+      item.append(amount, createText("Status: " + (request.status || "unknown")),
+        createText(request.created_at ? "Requested: " + new Date(request.created_at).toLocaleString() : "Request date unavailable"));
+      if (request.admin_note) item.appendChild(createText("Admin note: " + request.admin_note));
+      withdrawalsContent.appendChild(item);
+    });
+  }
+
+  async function logout() {
+    try {
+      requireDatabase();
+      const { error } = await db.auth.signOut();
+      if (error) throw error;
+      currentUser = null; currentProfile = null; dashboardRequest++;
+      if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
+      if (insightTimer) { clearInterval(insightTimer); insightTimer = null; }
+      showView("authView"); switchMode("login");
+      notice("You have been logged out.", "success");
+    } catch (error) { showError(error); }
+  }
+
+  async function copyReferral() {
+    const code = currentProfile?.referral_code;
+    if (!code) { notice("Your referral code has not been assigned yet.", "error"); return; }
+    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      notice("Your invite link has been copied.", "success");
+    } catch (error) {
+      console.error("Copy link:", error);
+      notice("Copy is unavailable in this browser. Share this link: " + link);
+    }
+  }
+
+  function shareInvite() {
+    const code = currentProfile?.referral_code;
+    if (!code) { notice("Your referral code has not been assigned yet.", "error"); return; }
+    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+    const message = `Join ${BRAND_NAME} — Learn, Write, Research and Grow: ${link}`;
+    if (navigator.share) {
+      navigator.share({ title: BRAND_NAME, text: message, url: link }).catch(error => {
+        if (error?.name !== "AbortError") notice(message);
+      });
+    } else copyReferral();
+  }
+
+  function contactSupport() {
+    const subject = encodeURIComponent(`${BRAND_NAME} support`);
+    const body = encodeURIComponent("Hello Scholarbrige Support,\n\nI need help with my account.\n\n" + `Account email: ${currentUser?.email || ""}\n`);
+    location.href = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
+  }
+
+  function applyTheme() {
+    try {
+      let started = Number(localStorage.getItem(THEME_KEY));
+      if (!Number.isFinite(started) || started <= 0) {
+        started = Date.now(); localStorage.setItem(THEME_KEY, String(started));
+      }
+      const elapsed = Math.max(0, Date.now() - started);
+      document.documentElement.dataset.theme = THEME_ORDER[Math.floor(elapsed / THEME_INTERVAL) % THEME_ORDER.length];
+    } catch (error) {
+      console.warn("SCF theme rotation:", error);
+      document.documentElement.dataset.theme = THEME_ORDER[0];
+    }
+  }
+
+  /* ---------------- EVENT LISTENERS ---------------- */
+
+  function bindEvents() {
+    $("signupForm")?.addEventListener("submit", signup);
+    $("loginForm")?.addEventListener("submit", login);
+    $("activationForm")?.addEventListener("submit", requestActivation);
+    $("sellAccountForm")?.addEventListener("submit", submitAccountSale);
+    $("sellAccountLevel")?.addEventListener("change", updateSalePrice);
+    $("refreshSaleQueue")?.addEventListener("click", () => loadAdminSaleQueue().catch(showError));
+    $("verificationForm")?.addEventListener("submit", verifyActivationCode);
+
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        switchMode(tab.dataset.mode);
+      });
+    });
+
+    $("checkVerification")?.addEventListener("click", refreshActivationStatus);
+    $("refreshActivationQueue")?.addEventListener("click", () => loadAdminActivationQueue().catch(showError));
+    $("enableActivationAlerts")?.addEventListener("click", async () => {
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          alarmAudioContext = alarmAudioContext || new AudioContextClass();
+          if (alarmAudioContext.state === "suspended") await alarmAudioContext.resume();
+          playAdminAlarm();
+        }
+        let permission = "unsupported";
+        if ("Notification" in window) permission = await Notification.requestPermission();
+        notice("Loud admin alarm enabled while this dashboard is open. New requests and position-number submissions trigger an alarm.", "success");
+      } catch (error) { notice("The browser blocked sound or notifications. Allow site sound/notifications and try again.", "error"); }
+    });
+    $("logoutVerification")?.addEventListener("click", logout);
+
+    $("checkStatus")?.addEventListener("click", refreshStatus);
+    $("checkPending")?.addEventListener("click", refreshStatus);
+
+    ["logoutActivation", "logoutPending", "dashLogout"].forEach(id => {
+      $(id)?.addEventListener("click", logout);
+    });
+
+    $("copyReferral")?.addEventListener("click", copyReferral);
+
+    $("shareInvite")?.addEventListener("click", shareInvite);
+
+    $("showSupport")?.addEventListener("click", contactSupport);
+
+    $("resetPassword")?.addEventListener("click", resetPassword);
+  }
+
+  /* ---------------- STARTUP ---------------- */
+
+  async function startApp() {
+    const year = $("year");
+    if (year) year.textContent = new Date().getFullYear();
+
+    applyTheme();
+    updateCosmicDayNight();
+    window.setInterval(updateCosmicDayNight, 60000);
+    bindEvents();
+
+    if (!db) {
+      notice("Supabase did not load. Please refresh the page.", "error");
+      return;
+    }
+
+    try {
+      const { data, error } = await db.auth.getSession();
+      if (error) throw error;
+
+      await routeUser(data.session?.user || null);
+
+      if (!authListenerRegistered) {
+        authListenerRegistered = true;
+
+        db.auth.onAuthStateChange((_event, session) => {
+          setTimeout(() => {
+            routeUser(session?.user || null);
+          }, 0);
+        });
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startApp, { once: true });
+  } else {
+    startApp();
+  }
+})();
+ 
