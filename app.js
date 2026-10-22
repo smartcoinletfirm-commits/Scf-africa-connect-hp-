@@ -277,29 +277,47 @@ if (data.user) {
   }
 
   async function requestActivation(event) {
-    event.preventDefault(); clearNotice();
-    if (busy) return;
-    const form = event.currentTarget, button = form.querySelector('button[type="submit"]');
-    busy = true; setBusy(button, true);
-    try {
-      requireDatabase();
-      if (!currentUser || !currentProfile) throw new Error("Please log in before requesting activation.");
-      const level = Number($("activationLevel")?.value);
-      const phone = phoneClean($("activationPhone")?.value);
-      if (!Number.isInteger(level) || level < 1 || level > 4) throw new Error("Choose a membership level from 1 to 4.");
-      if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new Error("Enter a valid phone number with country code, for example +2547XXXXXXXX.");
-      const { data, error } = await db.functions.invoke("scholarbridge-activation", { body: { action: "request", membership_level: level, phone } });
-      if (error) throw error;
-      if (!data?.request?.id) throw new Error(data?.error || "The activation request was not saved.");
-      currentActivationRequest = data.request;
-      $("verificationForm")?.classList.add("hidden");
-      if ($("verificationMessage")) $("verificationMessage").textContent = `Your Level ${level} request is recorded for ${phone}. Please wait for the administrator to assign your position number and send it through WhatsApp.`;
-      const phoneField = $("activationPhone"); if (phoneField) phoneField.value = phone;
-      showView("verificationView");
-      notice("Activation request sent. Your account remains locked until the administrator reviews your position number, confirms payment and approves the account.", "success");
-    } catch (error) { showError(error); }
-    finally { busy = false; setBusy(button, false); }
+  event.preventDefault();
+
+  try {
+    requireDatabase();
+
+    if (!currentUser) {
+      throw new Error("Please log in before requesting activation.");
+    }
+
+    const level = Number($("activationLevel")?.value);
+    const phone = phoneClean($("activationPhone")?.value);
+
+    if (!Number.isInteger(level) || level < 1 || level > 4) {
+      throw new Error("Please select a valid membership level.");
+    }
+
+    if (!phone) {
+      throw new Error("Please enter your payment phone number.");
+    }
+
+    setBusy(true);
+
+    const { data, error } = await db.rpc("scf_submit_activation", {
+      p_full_name: currentProfile?.full_name || currentUser.user_metadata?.full_name || "",
+      p_phone: phone,
+      p_membership_level: level
+    });
+
+    if (error) throw error;
+
+    notice("Activation request submitted. Continue to the verification screen.", "success");
+
+    await routeUser(currentUser);
+
+  } catch (error) {
+    showError(error);
+  } finally {
+    setBusy(false);
   }
+  }
+   
 
   async function verifyActivationCode(event) {
     event.preventDefault(); clearNotice();
