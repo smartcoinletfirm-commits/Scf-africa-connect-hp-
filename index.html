@@ -110,20 +110,65 @@
       </div>
     </section>
 
-    <section id="activationView" class="status-layout hidden">
-      <div class="status-card">
-        <div class="chill-illustration" aria-hidden="true"><div class="sun"></div><div class="cloud">☁</div><div class="person">☻</div><div class="mug">☕</div></div>
-        <div class="eyebrow">YOUR NEXT STEP</div><h1>Choose your membership</h1>
-        <p>Choose your membership level and enter one phone number for WhatsApp communication and task-payment contact. After you proceed, the administrator will assign your Scholarbrige position number and send it to you on WhatsApp.</p>
-        <form id="activationForm" class="form compact">
-          <label>Academic membership level<select id="activationLevel" name="membership_level" required><option value="">Choose a level</option><option value="1">Level 1 — Foundation (KES 500)</option><option value="2">Level 2 — Development (KES 1,005)</option><option value="3">Level 3 — Advanced (KES 1,780)</option><option value="4">Level 4 — Full academic support (KES 2,670)</option></select></label>
-          <label>Phone number for WhatsApp and task payments<input id="activationPhone" name="phone" type="tel" autocomplete="tel" inputmode="tel" required maxlength="20" placeholder="+2547XXXXXXXX"></label>
-          <button class="primary full" type="submit">Proceed <span>→</span></button>
-        </form>
-        <p class="small-note">Displayed activation amounts are in KES. Members outside Kenya must confirm the accepted payment method and amount with support before paying. Phone verification does not confirm payment or guarantee tasks, income, or academic outcomes.</p>
-        <button id="checkStatus" class="secondary full" type="button">Refresh my status</button>
-        <button id="logoutActivation" class="text-button" type="button">Log out</button>
-      </div>
+    <section id="verificationView" class="status-layout hidden">
+  <div class="status-card">
+    <div class="eyebrow">MEMBER POSITION VERIFICATION</div>
+
+    <h1>Enter your four-digit position number</h1>
+
+    <p id="verificationMessage">
+      Your activation request has been received. Wait for the administrator
+      to assign your position number and send it through WhatsApp.
+    </p>
+
+    <div class="security-warning" role="alert">
+      <strong>🔒 Keep your code private</strong>
+      <p>
+        Your position number is personal. Do not share it with friends
+        or anyone else. Submit it only on the official Scholarbrige
+        Academic Hub verification page.
+      </p>
+      <p>
+        Never enter or share your bank PIN, M-Pesa PIN, password,
+        or any financial-service security code.
+      </p>
+    </div>
+
+    <form id="verificationForm" class="form compact">
+      <label for="positionNumber">
+        Four-digit position number
+        <input
+          id="positionNumber"
+          name="position_number"
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          pattern="[0-9]{4}"
+          minlength="4"
+          maxlength="4"
+          required
+          placeholder="Enter 4-digit number"
+        >
+      </label>
+
+      <button class="primary full" type="submit">
+        Submit position number
+      </button>
+    </form>
+
+    <p class="small-note">
+      This is a Scholarbrige position/reference number. It is not a
+      bank PIN, password, or financial-service security code.
+    </p>
+
+    <button id="checkVerification" class="secondary full" type="button">
+      Refresh my status
+    </button>
+
+    <button id="logoutVerification" class="text-button" type="button">
+      Log out
+    </button>
+  </div>
     </section>
 
     <section id="verificationView" class="status-layout hidden">
