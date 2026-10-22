@@ -300,12 +300,12 @@ if (data.user) {
     setBusy(true);
 
     const { data, error } = await db.rpc("scf_submit_activation", {
-      p_full_name: currentProfile?.full_name || currentUser.user_metadata?.full_name || "",
-      p_phone: phone,
-      p_membership_level: level
-    });
+  p_full_name: currentProfile?.full_name || currentUser.user_metadata?.full_name || "",
+  p_phone: phone,
+  p_membership_level: level
+});
 
-    if (error) throw error;
+if (error) throw error;
 
     notice("Activation request submitted. Continue to the verification screen.", "success");
 
