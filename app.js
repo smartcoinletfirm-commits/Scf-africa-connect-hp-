@@ -371,10 +371,14 @@ if (error) throw error;
     );
 
   } catch (error) {
-    console.error("FBK submission:", error);
-    showError(error);
-  } finally {
-    setBusy(false);
+  console.error("FBK submission error:", error);
+  notice(
+    "FBK submission failed: " + (error?.message || String(error)),
+    "error"
+  );
+} finally {
+  setBusy(false);
+}
   }
   }
 
