@@ -61,8 +61,18 @@ let authListenerRegistered = false;
     clearNotice();
   }
   function setBusy(button, state) {
-    if (button) { button.disabled = state; button.setAttribute("aria-busy", state ? "true" : "false"); }
+  if (typeof button === "boolean") {
+    state = button;
+    button = document.querySelector(
+      '#activationForm button[type="submit"], #signupForm button[type="submit"], #loginForm button[type="submit"]'
+    );
   }
+
+  if (button && typeof button === "object" && "disabled" in button) {
+    button.disabled = Boolean(state);
+    button.setAttribute("aria-busy", state ? "true" : "false");
+  }
+  
   function phoneClean(value) { return String(value || "").trim().replace(/[()\s-]/g, ""); }
   function getReferral() { return (new URLSearchParams(location.search).get("ref") || "").trim().toUpperCase(); }
   function money(value, currency = "KES") {
