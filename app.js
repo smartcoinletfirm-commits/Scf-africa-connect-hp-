@@ -338,7 +338,7 @@ if (error) throw error;
     requireDatabase();
 
     if (!currentUser) {
-      throw new Error("Please log in again.");
+      throw new Error("Please log in before submitting your code.");
     }
 
     const input = document.querySelector(
@@ -347,35 +347,31 @@ if (error) throw error;
 
     const code = input?.value.trim() || "";
 
-    if (!/^\d{4}$/.test(code)) {
-      throw new Error("Enter a valid four-digit FBK code.");
-    }
-
-    const requestId = currentActivationRequest?.id;
-
-    if (!requestId) {
-      throw new Error(
-        "Your activation request could not be found. Tap Refresh my status and try again."
-      );
+    if (!/^[A-Za-z0-9-]{2,50}$/.test(code)) {
+      throw new Error("Please enter a valid FBK reference code.");
     }
 
     setBusy(true);
 
-    const { error } = await db.rpc("scf_submit_position", {
-      p_request_id: requestId,
-      p_position_number: code
-    });
+    const { error } = await db
+      .from("fbk_code_submissions")
+      .insert({
+        user_id: currentUser.id,
+        submitted_code: code
+      });
 
     if (error) throw error;
 
-    notice("Code submitted successfully. Wait for administrator review.", "success");
-
     input.value = "";
+    notice("Your FBK reference has been submitted successfully.", "success");
 
-    await routeUser(currentUser);
+    setMessage(
+      "verificationMessage",
+      "Your FBK reference has been submitted and is awaiting administrator review."
+    );
 
   } catch (error) {
-    console.error("FBK code submission:", error);
+    console.error("FBK submission:", error);
     showError(error);
   } finally {
     setBusy(false);
