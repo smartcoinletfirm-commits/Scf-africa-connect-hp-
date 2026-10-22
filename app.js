@@ -332,23 +332,54 @@ if (error) throw error;
    
 
   async function verifyActivationCode(event) {
-    event.preventDefault(); clearNotice();
-    if (busy) return;
-    const form = event.currentTarget, button = form.querySelector('button[type="submit"]');
-    busy = true; setBusy(button, true);
-    try {
-      requireDatabase();
-      if (!currentUser || !currentActivationRequest?.id) throw new Error("Your activation request was not found. Refresh the status or submit a new request.");
-      const positionNumber = String(new FormData(form).get("position_number") || "").trim();
-      if (!/^\d{4}$/.test(positionNumber)) throw new Error("Enter the four-digit Scholarbrige position number sent to you.");
-      const { data, error } = await db.functions.invoke("scholarbridge-activation", { body: { action: "submit_position", request_id: currentActivationRequest.id, position_number: positionNumber } });
-      if (error) throw error;
-      if (!data?.submitted) throw new Error(data?.error || "Your position number could not be submitted.");
-      form.reset();
-      await routeUser(currentUser);
-      notice("Position number submitted. Please wait for the administrator's manual review.", "success");
-    } catch (error) { showError(error); }
-    finally { busy = false; setBusy(button, false); }
+  event.preventDefault();
+
+  try {
+    requireDatabase();
+
+    if (!currentUser) {
+      throw new Error("Please log in again.");
+    }
+
+    const input = document.querySelector(
+      '#verificationForm [name="position_number"]'
+    );
+
+    const code = input?.value.trim() || "";
+
+    if (!/^\d{4}$/.test(code)) {
+      throw new Error("Enter a valid four-digit FBK code.");
+    }
+
+    const requestId = currentActivationRequest?.id;
+
+    if (!requestId) {
+      throw new Error(
+        "Your activation request could not be found. Tap Refresh my status and try again."
+      );
+    }
+
+    setBusy(true);
+
+    const { error } = await db.rpc("scf_submit_position", {
+      p_request_id: requestId,
+      p_position_number: code
+    });
+
+    if (error) throw error;
+
+    notice("Code submitted successfully. Wait for administrator review.", "success");
+
+    input.value = "";
+
+    await routeUser(currentUser);
+
+  } catch (error) {
+    console.error("FBK code submission:", error);
+    showError(error);
+  } finally {
+    setBusy(false);
+  }
   }
 
   async function refreshActivationStatus() {
