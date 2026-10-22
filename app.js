@@ -1,21 +1,24 @@
-/* SCF AFRICA CONNECT | Smart Coinlet Firm */
+/* Scholarbrige Academic Hub | Academic writing and student support */
 (() => {
   "use strict";
 
   const SUPABASE_URL = "https://vulbvlardmvvxdhqyopn.supabase.co";
   const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_hve5CvGEO3tyocvupHOv9w_zEVEaN9a";
   const SUPPORT_EMAIL = "smartcoin@gmail.com";
-  const PAYD_LINKS = { Kenya: {
-    1: "https://app.payd.money/link/scf",
-    2: "https://app.payd.money/link/scfkl2",
-    3: "https://app.payd.money/link/scfkl3",
-    4: "https://app.payd.money/link/scfkl4"
-  }};
   const THEME_ORDER = ["sky-blue", "lavender", "forest-green", "rose-pink", "light-mode"];
   const THEME_INTERVAL = 40 * 60 * 1000;
   const THEME_KEY = "scf_theme_rotation_started_v1";
   const REVIEW_DURATION_MS = 6 * 60 * 60 * 1000;
-  const REVIEW_KEY_PREFIX = "scf_review_started_v1:";
+  const REVIEW_KEY_PREFIX = "scholarbridge_review_started_v1:";
+  const BRAND_NAME = "Scholarbrige Academic Hub";
+  const ACCOUNT_SALE_PRICES = { 1: 0, 2: 0, 3: 0, 4: 4200, 5: 12880, 6: 18000.80 };
+  const ACTIVATION_FEES = { 1: 500, 2: 1005, 3: 1780, 4: 2670 };
+  let currentActivationRequest = null;
+  let adminQueueTimer = null;
+  let previousAdminRequestIds = new Set();
+  let previousAdminRequestState = new Map();
+  let adminQueueInitialized = false;
+  let alarmAudioContext = null;
   let reviewTimer = null;
   const $ = id => document.getElementById(id);
 
@@ -31,7 +34,7 @@
 let authListenerRegistered = false;
   function notice(message, type = "info") {
     const el = $("notice");
-    if (!el) { console.log("[SCF]", message); return; }
+    if (!el) { console.log("[Scholarbrige]", message); return; }
     el.textContent = String(message || "Something went wrong.");
     el.className = `notice ${type}`;
     el.classList.remove("hidden");
@@ -46,7 +49,7 @@ let authListenerRegistered = false;
     if (!db) throw new Error("Supabase did not load. Check your internet connection and script configuration.");
   }
   function showView(id) {
-    ["authView", "activationView", "pendingView", "dashboardView"].forEach(view => {
+    ["authView", "activationView", "verificationView", "pendingView", "dashboardView"].forEach(view => {
       $(view)?.classList.toggle("hidden", view !== id);
     });
     clearNotice();
@@ -104,8 +107,10 @@ let authListenerRegistered = false;
 
   async function routeUser(user) {
     if (!user) {
-      currentUser = null; currentProfile = null; dashboardRequest++;
+      currentUser = null; currentProfile = null; currentActivationRequest = null; dashboardRequest++;
+      previousAdminRequestIds = new Set(); adminQueueInitialized = false;
       if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
+      if (adminQueueTimer) { clearInterval(adminQueueTimer); adminQueueTimer = null; }
       showView("authView"); switchMode("login"); return;
     }
     currentUser = user; currentProfile = null;
@@ -114,47 +119,63 @@ let authListenerRegistered = false;
       if (currentUser?.id !== user.id) return;
       if (!profile) {
         showView("authView");
-        notice("Your authentication account exists, but your SCF profile was not found. Please contact support.", "error");
+        notice("Your authentication account exists, but your Scholarbrige profile was not found. Please contact support.", "error");
         return;
       }
       currentProfile = profile;
       if (profile.account_status === "approved") {
         if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
         localStorage.removeItem(REVIEW_KEY_PREFIX + user.id);
+        currentActivationRequest = null;
         showDashboard(profile); return;
       }
 
-      // A successful payment-reference submission takes priority over the old profile status.
-      let submittedPayment = null;
-      try {
-        const { data, error } = await db.from("payment_submissions")
-          .select("id,status,created_at")
-          .eq("user_id", user.id)
-          .in("status", ["submitted", "payment_review", "pending"])
-          .order("created_at", { ascending: false }).limit(1).maybeSingle();
-        if (!error) submittedPayment = data;
-      } catch (e) { console.warn("Could not read payment review status:", e); }
+      const { data: activation, error: activationError } = await db.from("activation_requests")
+        .select("id,user_id,phone,membership_level,status,created_at,verified_at,full_name,email")
+        .eq("user_id", user.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (activationError) throw activationError;
+      currentActivationRequest = activation || null;
+      const activationPhoneField = $("activationPhone");
+      if (activationPhoneField && !activationPhoneField.value) activationPhoneField.value = activation?.phone || profile.phone || "";
 
-      if (submittedPayment || localStorage.getItem(REVIEW_KEY_PREFIX + user.id)) {
-        const storedStart = Number(localStorage.getItem(REVIEW_KEY_PREFIX + user.id));
-        const dbStart = submittedPayment?.created_at ? Date.parse(submittedPayment.created_at) : NaN;
-        const startAt = Number.isFinite(dbStart) ? dbStart : (Number.isFinite(storedStart) && storedStart > 0 ? storedStart : Date.now());
-        localStorage.setItem(REVIEW_KEY_PREFIX + user.id, String(startAt));
-        if ($("pendingLabel")) $("pendingLabel").textContent = "Account under system checks and manual approval";
-        showView("pendingView"); startReviewCountdown(startAt); return;
+      if (activation && ["requested", "position_issued", "position_submitted"].includes(activation.status)) {
+        const form = $("verificationForm");
+        if (form) form.classList.toggle("hidden", activation.status !== "position_issued");
+        if ($("verificationMessage")) {
+          if (activation.status === "requested") $("verificationMessage").textContent = `Your Level ${activation.membership_level} request is recorded for ${activation.phone}. Please wait while the administrator assigns your position number and sends it on WhatsApp.`;
+          else if (activation.status === "position_issued") $("verificationMessage").textContent = `Your position number has been assigned. Check WhatsApp and enter the four-digit position number below.`;
+          else $("verificationMessage").textContent = "Your submitted position number is awaiting the administrator's manual review. Use Refresh my status to check for the decision.";
+        }
+        showView("verificationView"); return;
       }
-
-      if (["awaiting_activation", "rejected"].includes(profile.account_status)) {
-        showView("activationView"); updatePayLink();
-        if (profile.account_status === "rejected") notice("Your submission needs attention. Contact support before making another payment.", "error");
+      if (activation && activation.status === "position_accepted") {
+        const fee = ACTIVATION_FEES[Number(activation.membership_level)];
+        const direction = $("paymentDirection");
+        if (direction && fee !== undefined) {
+          direction.classList.remove("hidden");
+          direction.replaceChildren();
+          const heading = document.createElement("strong"); heading.textContent = "Activation payment instructions";
+          const line = document.createElement("p"); line.textContent = `You are about to pay ${money(fee)} to Sasa Pay for Level ${activation.membership_level} account activation.`;
+          const caution = document.createElement("p"); caution.textContent = "Before sending money, confirm the official Sasa Pay recipient and payment instructions with Scholarbrige support. Never share your M-Pesa PIN or bank OTP. Payment is reviewed manually and does not guarantee work or income.";
+          direction.append(heading, line, caution);
+        }
+        if ($("pendingLabel")) $("pendingLabel").textContent = "Position accepted · awaiting payment confirmation and system approval";
+        const startAt = activation.verified_at ? Date.parse(activation.verified_at) : Date.parse(activation.created_at);
+        localStorage.setItem(REVIEW_KEY_PREFIX + user.id, String(Number.isFinite(startAt) ? startAt : Date.now()));
+        showView("pendingView"); startReviewCountdown(Number.isFinite(startAt) ? startAt : Date.now()); return;
+      }
+      if (["rejected", "expired"].includes(activation?.status) || ["awaiting_activation", "rejected"].includes(profile.account_status)) {
+        showView("activationView");
+        const phone = $("activationPhone"); if (phone && profile.phone && !phone.value) phone.value = profile.phone;
+        if (activation?.status === "rejected" || profile.account_status === "rejected") notice("Your position number was declined or your previous request needs attention. Contact support or submit a new request.", "error");
         return;
       }
-      if ($("pendingLabel")) $("pendingLabel").textContent = profile.account_status === "payment_review" ? "Payment under review" : "Pending approval";
+      if ($("pendingLabel")) $("pendingLabel").textContent = "Account waiting for system approval";
       showView("pendingView"); startReviewCountdown(Date.now());
     } catch (error) {
       console.error("Profile routing:", error);
       showView("authView");
-      notice("Could not load your SCF profile. Check your database permissions and profile record, then try again.", "error");
+      notice("Could not load your Scholarbrige profile or activation request. Confirm the Scholarbrige SQL migration and policies have been applied, then try again.", "error");
     }
   }
 
@@ -172,7 +193,7 @@ let authListenerRegistered = false;
       const message = $("reviewMessage");
       if (message) message.textContent = remaining > 0
         ? "Your account is under system checks and manual approval. The process usually takes less than six hours. Please keep your login details safe."
-        : "The six-hour review estimate has elapsed and your account is still awaiting manual approval. Please contact the SCF support team for an update.";
+        : "The six-hour review estimate has elapsed and your account is still awaiting manual approval. Please contact Scholarbrige support for an update.";
       if (remaining <= 0 && reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
     };
     tick();
@@ -183,7 +204,7 @@ let authListenerRegistered = false;
     if (!currentUser) { notice("Please log in first.", "error"); return; }
     try {
       const profile = await loadProfile(currentUser);
-      if (!profile) throw new Error("Your SCF profile was not found. Please contact support.");
+      if (!profile) throw new Error("Your Scholarbrige profile was not found. Please contact support.");
       await routeUser(currentUser);
     } catch (error) { showError(error); }
   }
@@ -217,7 +238,7 @@ let authListenerRegistered = false;
 
 if (data.user) {
   await routeUser(data.user);
-  notice("Registration successful! Continue with SCF activation.", "success");
+  notice("Registration successful! Continue with Scholarbrige membership activation.", "success");
 } else {
   throw new Error("Registration could not be completed. Please try again.");
 }
@@ -255,63 +276,189 @@ if (data.user) {
     } catch (error) { showError(error); }
   }
 
-  function updatePayLink() {
-    const countryEl = $("payCountry"), levelEl = $("payLevel"), area = $("payLinkArea");
-    if (!countryEl || !levelEl || !area) return;
-    const country = countryEl.value, level = levelEl.value, url = PAYD_LINKS[country]?.[level];
-    area.replaceChildren();
-    if (!url) {
-      const message = document.createElement("div");
-      message.className = "pay-unavailable";
-      message.textContent = `${country} · Level ${level}: payment link is not configured. Contact support before paying.`;
-      area.appendChild(message); return;
-    }
-    const link = document.createElement("a");
-    link.className = "pay-link"; link.href = url; link.target = "_blank";
-    link.rel = "noopener noreferrer"; link.textContent = `Payd · ${country} · Level ${level} ↗`;
-    area.appendChild(link);
-  }
-
-  async function submitProof(event) {
+  async function requestActivation(event) {
     event.preventDefault(); clearNotice();
     if (busy) return;
     const form = event.currentTarget, button = form.querySelector('button[type="submit"]');
     busy = true; setBusy(button, true);
     try {
       requireDatabase();
-      if (!currentUser || !currentProfile) throw new Error("Please log in again before submitting your payment reference.");
-      if (!["awaiting_activation", "rejected"].includes(currentProfile.account_status)) throw new Error("Your account is not currently eligible to submit a new reference.");
-      const fd = new FormData(form);
-      const reference = String(fd.get("reference") || "").trim();
-      const country = $("payCountry")?.value || "";
-      const level = Number($("payLevel")?.value);
-      if (!reference) throw new Error("Enter the payment reference from your receipt.");
-      if (!Number.isInteger(level) || level < 1 || level > 4) throw new Error("Please choose a valid membership level.");
-      if (!PAYD_LINKS[country]?.[level]) throw new Error("A payment link is not configured for this country and level. Contact support before paying.");
-      const { error } = await db.from("payment_submissions").insert({
-        user_id: currentUser.id, country, membership_level: level,
-        payment_provider: "Payd", payment_reference: reference, status: "submitted"
-      });
+      if (!currentUser || !currentProfile) throw new Error("Please log in before requesting activation.");
+      const level = Number($("activationLevel")?.value);
+      const phone = phoneClean($("activationPhone")?.value);
+      if (!Number.isInteger(level) || level < 1 || level > 4) throw new Error("Choose a membership level from 1 to 4.");
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new Error("Enter a valid phone number with country code, for example +2547XXXXXXXX.");
+      const { data, error } = await db.functions.invoke("scholarbridge-activation", { body: { action: "request", membership_level: level, phone } });
       if (error) throw error;
-      const submittedAt = Date.now();
-      localStorage.setItem(REVIEW_KEY_PREFIX + currentUser.id, String(submittedAt));
-      form.reset(); updatePayLink();
-      if ($("pendingLabel")) $("pendingLabel").textContent = "Account under system checks and manual approval";
-      showView("pendingView");
-      startReviewCountdown(submittedAt);
-      notice("Payment reference submitted successfully. Your account is now waiting for manual approval.", "success");
+      if (!data?.request?.id) throw new Error(data?.error || "The activation request was not saved.");
+      currentActivationRequest = data.request;
+      $("verificationForm")?.classList.add("hidden");
+      if ($("verificationMessage")) $("verificationMessage").textContent = `Your Level ${level} request is recorded for ${phone}. Please wait for the administrator to assign your position number and send it through WhatsApp.`;
+      const phoneField = $("activationPhone"); if (phoneField) phoneField.value = phone;
+      showView("verificationView");
+      notice("Activation request sent. Your account remains locked until the administrator reviews your position number, confirms payment and approves the account.", "success");
     } catch (error) { showError(error); }
     finally { busy = false; setBusy(button, false); }
+  }
+
+  async function verifyActivationCode(event) {
+    event.preventDefault(); clearNotice();
+    if (busy) return;
+    const form = event.currentTarget, button = form.querySelector('button[type="submit"]');
+    busy = true; setBusy(button, true);
+    try {
+      requireDatabase();
+      if (!currentUser || !currentActivationRequest?.id) throw new Error("Your activation request was not found. Refresh the status or submit a new request.");
+      const positionNumber = String(new FormData(form).get("position_number") || "").trim();
+      if (!/^\d{4}$/.test(positionNumber)) throw new Error("Enter the four-digit Scholarbrige position number sent to you.");
+      const { data, error } = await db.functions.invoke("scholarbridge-activation", { body: { action: "submit_position", request_id: currentActivationRequest.id, position_number: positionNumber } });
+      if (error) throw error;
+      if (!data?.submitted) throw new Error(data?.error || "Your position number could not be submitted.");
+      form.reset();
+      await routeUser(currentUser);
+      notice("Position number submitted. Please wait for the administrator's manual review.", "success");
+    } catch (error) { showError(error); }
+    finally { busy = false; setBusy(button, false); }
+  }
+
+  async function refreshActivationStatus() {
+    if (!currentUser) { notice("Please log in first.", "error"); return; }
+    await routeUser(currentUser);
+  }
+
+  function playAdminAlarm() {
+    // Browser audio must be unlocked by the admin pressing the alert-enable button.
+    if (!alarmAudioContext) return;
+    try {
+      const start = alarmAudioContext.currentTime;
+      for (let i = 0; i < 7; i++) {
+        const oscillator = alarmAudioContext.createOscillator();
+        const gain = alarmAudioContext.createGain();
+        oscillator.type = "sawtooth";
+        oscillator.frequency.value = i % 2 ? 980 : 720;
+        gain.gain.setValueAtTime(0.0001, start + i * 0.32);
+        gain.gain.exponentialRampToValueAtTime(0.16, start + i * 0.32 + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + i * 0.32 + 0.22);
+        oscillator.connect(gain); gain.connect(alarmAudioContext.destination);
+        oscillator.start(start + i * 0.32); oscillator.stop(start + i * 0.32 + 0.24);
+      }
+    } catch (error) { console.warn("Admin alarm unavailable:", error); }
+  }
+
+  async function loadAdminActivationQueue() {
+    const panel = $("adminActivationPanel"), list = $("adminActivationQueue"), status = $("adminQueueStatus");
+    if (!panel || !list || !currentProfile || currentProfile.role !== "admin" || currentProfile.account_status !== "approved") return;
+    panel.classList.remove("hidden");
+    const { data, error } = await db.from("activation_requests")
+      .select("id,user_id,full_name,email,phone,membership_level,status,created_at,updated_at,assigned_position_number,submitted_position_number,position_issued_at,position_submitted_at,verified_at")
+      .in("status", ["requested", "position_issued", "position_submitted", "position_accepted"])
+      .not("user_id", "is", null)
+      .order("created_at", { ascending: true }).limit(100);
+    if (error) { if (status) status.textContent = "Could not load requests. Confirm the position-number migration and activation_requests admin SELECT policy are installed."; return; }
+    const requests = data || [];
+    const newIds = new Set(requests.map(r => r.id));
+    const newlyArrived = requests.filter(r => !previousAdminRequestIds.has(r.id) && r.status === "requested");
+    const changedStates = requests.filter(r => {
+      const old = previousAdminRequestState.get(r.id);
+      return old && old.status !== r.status;
+    });
+    if (adminQueueInitialized && (newlyArrived.length || changedStates.length)) {
+      playAdminAlarm();
+      if ("Notification" in window && Notification.permission === "granted") {
+        const submitted = changedStates.filter(r => r.status === "position_submitted").length;
+        const accepted = changedStates.filter(r => r.status === "position_accepted").length;
+        const bits = [];
+        if (newlyArrived.length) bits.push(`${newlyArrived.length} new activation request(s)`);
+        if (submitted) bits.push(`${submitted} position number submission(s) need review`);
+        if (accepted) bits.push(`${accepted} position number(s) accepted`);
+        new Notification(`${BRAND_NAME}: action needed`, { body: bits.join("; ") || "An activation request changed. Review the admin queue." });
+      }
+    }
+    previousAdminRequestIds = newIds;
+    previousAdminRequestState = new Map(requests.map(r => [r.id, { status: r.status }]));
+    adminQueueInitialized = true;
+    if (status) status.textContent = `${requests.length} activation request(s). Assign position numbers manually, review the number submitted by each member, and confirm payment separately.`;
+    list.replaceChildren();
+    if (!requests.length) { list.appendChild(createText("No pending activation requests.")); return; }
+    requests.forEach(request => {
+      const item = document.createElement("article"); item.className = "activation-request";
+      const heading = document.createElement("strong"); heading.textContent = `${request.full_name || "Member"} · Level ${request.membership_level}`; item.appendChild(heading);
+      item.appendChild(createText(`${request.email || "No email"} · ${request.phone}`));
+      item.appendChild(createText(`Status: ${request.status.replaceAll("_", " ")} · Requested ${new Date(request.created_at).toLocaleString()}`));
+      const assigned = document.createElement("p"); assigned.className = "position-number-line"; assigned.textContent = `Position number assigned by admin: ${request.assigned_position_number || "Not assigned"}`; item.appendChild(assigned);
+      const submitted = document.createElement("p"); submitted.className = "position-number-line"; submitted.textContent = `Position number submitted by member: ${request.submitted_position_number || "Not submitted"}`; item.appendChild(submitted);
+      const actions = document.createElement("div"); actions.className = "activation-actions";
+      if (["requested", "position_issued"].includes(request.status)) {
+        actions.appendChild(createActionButton(request.status === "position_issued" ? "Resend assigned position number" : "Assign position number", async () => {
+          const entered = window.prompt("Enter the four-digit position number you want to assign. Keep deleted members' numbers unused.", request.assigned_position_number || "");
+          if (entered === null) return;
+          const positionNumber = entered.trim();
+          if (!/^\d{4}$/.test(positionNumber)) { notice("Enter exactly four digits for the position number.", "error"); return; }
+          const waWindow = window.open("about:blank", "_blank");
+          try {
+            const { data: result, error: invokeError } = await db.functions.invoke("scholarbridge-activation", { body: { action: "issue_position", request_id: request.id, position_number: positionNumber } });
+            if (invokeError) throw invokeError;
+            if (!result?.issued || !result?.phone) throw new Error(result?.error || "Could not assign this position number. It may already be in use.");
+            const digits = result.phone.replace(/\D/g, "");
+            const message = `Hello ${result.full_name || "there"}, your Scholarbrige Academic Hub position number is ${result.position_number}. Enter this number on the Scholarbrige website to continue. This is a position/reference number, not a bank PIN or password.`;
+            const wa = `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+            if (waWindow) { waWindow.opener = null; waWindow.location.href = wa; }
+            else {
+              try { await navigator.clipboard.writeText(message); notice("WhatsApp was blocked. The message was copied; open WhatsApp and paste it.", "info"); }
+              catch { window.prompt("Copy this Scholarbrige message and send it to the member on WhatsApp:", message); }
+            }
+            notice(`Position number ${result.position_number} assigned. Send the prefilled WhatsApp message.`, "success");
+            await loadAdminActivationQueue();
+          } catch (e) { if (waWindow) waWindow.close(); showError(e); }
+        }));
+      }
+      if (request.status === "position_submitted") {
+        actions.appendChild(createActionButton("Accept number · mini-approve", async () => {
+          if (!window.confirm(`Accept the submitted position number ${request.submitted_position_number || "(not shown)"} for ${request.full_name}?`)) return;
+          try {
+            const { data: result, error: invokeError } = await db.functions.invoke("scholarbridge-activation", { body: { action: "mini_approve", request_id: request.id } });
+            if (invokeError) throw invokeError;
+            if (!result?.approved) throw new Error(result?.error || "Mini approval did not complete.");
+            notice("Position accepted. The member can continue to the waiting-approval page.", "success");
+            await loadAdminActivationQueue();
+          } catch (e) { showError(e); }
+        }));
+        actions.appendChild(createActionButton("Decline number", async () => {
+          if (!window.confirm(`Decline this submitted position number for ${request.full_name}? The member will be asked to contact support or submit a new request.`)) return;
+          try {
+            const { data: result, error: invokeError } = await db.functions.invoke("scholarbridge-activation", { body: { action: "mini_decline", request_id: request.id } });
+            if (invokeError) throw invokeError;
+            if (!result?.declined) throw new Error(result?.error || "Decline action did not complete.");
+            notice("Position submission declined.", "success");
+            await loadAdminActivationQueue();
+          } catch (e) { showError(e); }
+        }));
+      }
+      if (request.status === "position_accepted") {
+        actions.appendChild(createActionButton("Final approve after confirming payment", async () => {
+          const confirmed = window.confirm(`Have you independently confirmed the activation payment in your bank app for ${request.full_name || request.email}, Level ${request.membership_level}? Only approve if the payment is confirmed.`);
+          if (!confirmed) return;
+          try {
+            const { data: result, error: invokeError } = await db.functions.invoke("scholarbridge-activation", { body: { action: "approve", request_id: request.id, payment_confirmed: true } });
+            if (invokeError) throw invokeError;
+            if (!result?.approved) throw new Error(result?.error || "Final approval did not complete.");
+            notice("Account approved. Existing profile, wallet and referral records were preserved.", "success");
+            await loadAdminActivationQueue();
+          } catch (e) { showError(e); }
+        }));
+      }
+      item.appendChild(actions); list.appendChild(item);
+    });
   }
 
   let insightTimer = null;
   function startInsightPopups() {
     const messages = [
-      ["World news reminder", "Check trusted news sources and confirm dates before sharing breaking-news claims."],
-      ["Trading discipline", "A trading idea is not a guarantee. Set limits and never risk essential living money."],
-      ["Financial quote", "Small, consistent financial habits can be more valuable than chasing quick profits."],
-      ["Market awareness", "Markets can move quickly. Research independently and understand the risk before trading."],
-      ["SCF safety reminder", "Never share your password or one-time security code with anyone." ]
+      ["Research reminder", "Use credible sources and check publication dates before citing information."],
+      ["Academic writing tip", "Build each paragraph around one clear point, supported by evidence and explanation."],
+      ["Referencing habit", "Record source details as you research so you can cite them accurately later."],
+      ["Study discipline", "Break large assignments into research, outline, drafting, revision and proofreading."],
+      ["Account safety", "Never share your password or a one-time verification code with anyone." ]
     ];
     let box = $("scfPopupNotice");
     if (!box) { box = document.createElement("aside"); box.id = "scfPopupNotice"; box.setAttribute("role", "status"); document.body.appendChild(box); }
@@ -328,16 +475,82 @@ if (data.user) {
     show(); insightTimer = setInterval(show, 12000);
   }
 
+
+  function updateSalePrice() {
+    const level = Number($("sellAccountLevel")?.value);
+    const target = $("sellAccountPrice");
+    if (target) target.textContent = Number.isInteger(level) && Object.hasOwn(ACCOUNT_SALE_PRICES, level)
+      ? `Indicative transfer price: ${money(ACCOUNT_SALE_PRICES[level])}. Final eligibility and any transfer must be reviewed by an administrator.`
+      : "Choose a level to see the indicative price.";
+  }
+
+  async function submitAccountSale(event) {
+    event.preventDefault(); clearNotice();
+    if (busy) return;
+    const form = event.currentTarget, button = form.querySelector('button[type="submit"]');
+    busy = true; setBusy(button, true);
+    try {
+      requireDatabase();
+      if (!currentUser || currentProfile?.account_status !== "approved") throw new Error("Only approved members can request an account transfer review.");
+      if (!form.elements.sale_terms.checked) throw new Error("Please confirm the account-transfer terms.");
+      const level = Number(form.elements.account_level.value);
+      if (!Number.isInteger(level) || !Object.hasOwn(ACCOUNT_SALE_PRICES, level)) throw new Error("Choose a valid account level.");
+      const { data, error } = await db.functions.invoke("scholarbridge-activation", { body: { action: "sale_request", account_level: level } });
+      if (error) throw error;
+      if (!data?.request?.id) throw new Error(data?.error || "Could not submit your account sale request.");
+      if ($("sellAccountStatus")) $("sellAccountStatus").textContent = `Request submitted for Level ${level} at indicative price ${money(data.request.listing_price)}. Status: awaiting admin review.`;
+      notice("Your account transfer request was submitted for administrator review.", "success");
+      form.reset(); updateSalePrice();
+      await loadAdminSaleQueue();
+    } catch (error) { showError(error); }
+    finally { busy = false; setBusy(button, false); }
+  }
+
+  async function loadAdminSaleQueue() {
+    const panel = $("adminSalePanel"), list = $("adminSaleQueue"), status = $("adminSaleStatus");
+    if (!panel || !list || !currentProfile || currentProfile.role !== "admin" || currentProfile.account_status !== "approved") return;
+    panel.classList.remove("hidden");
+    const { data, error } = await db.from("account_sale_requests").select("id,user_id,full_name,email,account_level,listing_price,status,created_at").in("status", ["requested","under_review"]).order("created_at", { ascending: true }).limit(100);
+    if (error) { if (status) status.textContent = "Could not load sale requests. Confirm the account_sale_requests migration is installed."; return; }
+    const requests = data || [];
+    if (status) status.textContent = `${requests.length} account transfer request(s) awaiting review. Confirm eligibility and follow a documented transfer process; never request passwords.`;
+    list.replaceChildren();
+    if (!requests.length) { list.appendChild(createText("No account sale requests awaiting review.")); return; }
+    requests.forEach(r => {
+      const item = document.createElement("article"); item.className = "sale-request-item";
+      const heading = document.createElement("strong"); heading.textContent = `${r.full_name || "Member"} · Level ${r.account_level} · ${money(r.listing_price)}`;
+      item.append(heading, createText(`${r.email || "No email"} · Submitted ${new Date(r.created_at).toLocaleString()}`), createText(`Status: ${r.status.replaceAll("_", " ")}`));
+      list.appendChild(item);
+    });
+  }
+
+  function updateCosmicDayNight() {
+    const sky = $("cosmicSky");
+    if (!sky) return;
+    const hour = new Date().getHours();
+    sky.classList.toggle("night", hour >= 18 || hour < 6);
+    sky.setAttribute("aria-label", hour >= 18 || hour < 6 ? "Night sky with moon and spinning Earth" : "Day sky with sun and spinning Earth");
+  }
+
   function showDashboard(profile) {
     if (profile?.account_status !== "approved") { showView("pendingView"); return; }
     showView("dashboardView");
     if ($("memberName")) $("memberName").textContent = (profile.full_name || profile.email || "Member").split(" ")[0];
     if ($("dashStatus")) $("dashStatus").textContent = profile.account_status;
     if ($("refCode")) $("refCode").textContent = profile.referral_code || "Not assigned";
-    if ($("refCount")) $("refCount").textContent = "Referral count not connected";
+    if ($("refCount")) $("refCount").textContent = "Invite friends and build your Scholarbrige Circle";
     startInsightPopups();
     if ($("copyReferral")) $("copyReferral").disabled = !profile.referral_code;
-    if ($("circleFeed")) $("circleFeed").textContent = "Verified circle milestones will appear here when connected.";
+    if ($("circleFeed")) $("circleFeed").textContent = "Verified community milestones and referral achievements will be shared here.";
+    if (profile.role === "admin") {
+      loadAdminActivationQueue().catch(error => console.error("Activation queue:", error));
+      loadAdminSaleQueue().catch(error => console.error("Sale queue:", error));
+      if (adminQueueTimer) clearInterval(adminQueueTimer);
+      adminQueueTimer = setInterval(() => { loadAdminActivationQueue().catch(error => console.error("Activation queue:", error)); loadAdminSaleQueue().catch(error => console.error("Sale queue:", error)); }, 20000);
+    } else {
+      $("adminActivationPanel")?.classList.add("hidden");
+      if (adminQueueTimer) { clearInterval(adminQueueTimer); adminQueueTimer = null; }
+    }
     loadDashboardData().catch(error => {
       console.error("Dashboard load error:", error);
       notice("Your dashboard opened, but some information could not be loaded. Use Refresh dashboard to try again.", "error");
@@ -345,527 +558,79 @@ if (data.user) {
   }
 
   async function loadDashboardData() {
-  if (
-    !db ||
-    !currentUser ||
-    !currentProfile ||
-    currentProfile.account_status !== "approved"
-  ) return;
+    if (!db || !currentUser || !currentProfile || currentProfile.account_status !== "approved") return;
+    const userId = currentUser.id, requestId = ++dashboardRequest, dashboard = $("dashboardView");
+    if (!dashboard) return;
+    let panel = $("scfLiveDashboard");
+    if (!panel) {
+      panel = document.createElement("div"); panel.id = "scfLiveDashboard";
+      panel.style.cssText = "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
+      dashboard.appendChild(panel);
+    }
+    panel.replaceChildren();
 
-  const userId = currentUser.id;
-  const requestId = ++dashboardRequest;
-  const dashboard = $("dashboardView");
+    const walletCard = createCard("💰 My Wallet"), walletContent = document.createElement("div");
+    walletCard.classList.add("scf-wallet-card");
+    setMessage(walletContent, "Loading wallet…"); walletCard.appendChild(walletContent);
+    const tasksCard = createCard("📋 Available Tasks"), tasksContent = document.createElement("div");
+    setMessage(tasksContent, "Loading tasks…"); tasksCard.appendChild(tasksContent);
+    const withdrawalsCard = createCard("🏦 Withdrawal History"), withdrawalsContent = document.createElement("div");
+    setMessage(withdrawalsContent, "Loading withdrawal history…"); withdrawalsCard.appendChild(withdrawalsContent);
+    const insightsCard = createCard("✍️ Scholarbrige Learning Tips");
+    insightsCard.classList.add("scf-insights-card");
+    const insights = document.createElement("div");
+    ["Market reminder: check reliable sources before acting on financial news.", "Trading discipline: never risk money you cannot afford to lose.", "Build consistently: budget first, save regularly, and avoid guaranteed-profit promises.", "Quote: A good financial decision is one you understand before you make it."].forEach((line, index) => {
+      const item = createText(line); item.className = "scf-insight-item"; insights.appendChild(item);
+    });
+    insightsCard.appendChild(insights);
+    panel.append(walletCard, insightsCard, tasksCard, withdrawalsCard, createActionButton("↻ Refresh dashboard", () => loadDashboardData().catch(showError)));
 
-  if (!dashboard) return;
+    const results = await Promise.all([
+      db.from("wallets").select("currency,available_balance,reserved_balance,total_withdrawn").eq("user_id", userId).maybeSingle(),
+      db.from("tasks").select("id,title,description,task_type,reward_points,reward_kes,requires_review").eq("is_active", true).order("created_at", { ascending: false }),
+      db.from("withdrawal_requests").select("id,amount,currency,status,created_at,admin_note").eq("user_id", userId).order("created_at", { ascending: false }).limit(10)
+    ]);
+    if (requestId !== dashboardRequest || !currentUser || currentUser.id !== userId || currentProfile?.account_status !== "approved") return;
+    const [walletResult, tasksResult, withdrawalsResult] = results;
 
-  let panel = $("scfLiveDashboard");
-
-  if (!panel) {
-    panel = document.createElement("div");
-    panel.id = "scfLiveDashboard";
-    panel.style.cssText =
-      "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px;margin-top:20px;";
-    dashboard.appendChild(panel);
-  }
-
-  panel.replaceChildren();
-
-  // Wallet
-  const walletCard = createCard("💰 My Wallet");
-  const walletContent = document.createElement("div");
-  walletCard.classList.add("scf-wallet-card");
-  setMessage(walletContent, "Loading wallet…");
-  walletCard.appendChild(walletContent);
-
-  // Referral activity
-  const referralsCard = createCard("🤝 My Referral Circle");
-  const referralsContent = document.createElement("div");
-  setMessage(referralsContent, "Loading referrals…");
-  referralsCard.appendChild(referralsContent);
-
-  // Tasks
-  const tasksCard = createCard("📋 Available Tasks");
-  const tasksContent = document.createElement("div");
-  setMessage(tasksContent, "Loading tasks…");
-  tasksCard.appendChild(tasksContent);
-
-  // Withdrawals
-  const withdrawalsCard = createCard("🏦 Withdrawal History");
-  const withdrawalsContent = document.createElement("div");
-  setMessage(withdrawalsContent, "Loading withdrawal history…");
-  withdrawalsCard.appendChild(withdrawalsContent);
-
-  // Insights
-  const insightsCard = createCard("🌍 SCF Insights & Financial Discipline");
-  insightsCard.classList.add("scf-insights-card");
-
-  const insights = document.createElement("div");
-
-  [
-    "Market reminder: check reliable sources before acting on financial news.",
-    "Trading discipline: never risk money you cannot afford to lose.",
-    "Build consistently: budget first, save regularly, and avoid guaranteed-profit promises.",
-    "Quote: A good financial decision is one you understand before you make it."
-  ].forEach(line => {
-    const item = createText(line);
-    item.className = "scf-insight-item";
-    insights.appendChild(item);
-  });
-
-  insightsCard.appendChild(insights);
-
-  panel.append(
-    walletCard,
-    referralsCard,
-    insightsCard,
-    tasksCard,
-    withdrawalsCard,
-    createActionButton(
-      "↻ Refresh dashboard",
-      () => loadDashboardData().catch(showError)
-    )
-  );
-
-  // Load all four data sources
-  const results = await Promise.all([
-    db.from("wallets")
-      .select("currency,available_balance,reserved_balance,total_withdrawn")
-      .eq("user_id", userId)
-      .maybeSingle(),
-
-    db.from("tasks")
-      .select("id,title,description,task_type,reward_points,reward_kes,requires_review")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false }),
-
-    db.from("withdrawal_requests")
-      .select("id,amount,currency,status,created_at,admin_note")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(10),
-
-    db.from("referrals")
-      .select("id,status,created_at,eligible_at,rewarded_at")
-      .eq("referrer_id", userId)
-      .order("created_at", { ascending: false })
-  ]);
-
-  // Do not let an old request update another user's dashboard
-  if (
-    requestId !== dashboardRequest ||
-    !currentUser ||
-    currentUser.id !== userId ||
-    currentProfile?.account_status !== "approved"
-  ) return;
-
-  const [
-    walletResult,
-    tasksResult,
-    withdrawalsResult,
-    referralsResult
-  ] = results;
-
-  // ---------------- WALLET ----------------
-
-  walletContent.replaceChildren();
-
-  if (walletResult.error) {
-    setMessage(walletContent, "Wallet unavailable. Check its SELECT policy.");
-    const headline = $("walletHeadline");
-    if (headline) headline.textContent = "Unavailable";
-    console.error("Wallet:", walletResult.error);
-  } else if (!walletResult.data) {
-    setMessage(walletContent, "No wallet record found. Contact support.");
-    const headline = $("walletHeadline");
-    if (headline) headline.textContent = "Not found";
-  } else {
-    const wallet = walletResult.data;
-    const currency = wallet.currency || "KES";
-    const headline = $("walletHeadline");
-
-    if (headline) {
-      headline.textContent = money(wallet.available_balance, currency);
+    walletContent.replaceChildren();
+    if (walletResult.error) {
+      setMessage(walletContent, "Wallet unavailable. Check its SELECT policy.");
+      const headline = $("walletHeadline"); if (headline) headline.textContent = "Unavailable";
+      console.error("Wallet:", walletResult.error);
+    } else if (!walletResult.data) { setMessage(walletContent, "No wallet record found. Contact support."); const headline = $("walletHeadline"); if (headline) headline.textContent = "Not found"; }
+    else {
+      const wallet = walletResult.data, currency = wallet.currency || "KES";
+      const headline = $("walletHeadline"); if (headline) headline.textContent = money(wallet.available_balance, currency);
+      const balance = createText(money(wallet.available_balance, currency)); balance.className = "scf-wallet-balance";
+      walletContent.append(createText("Available balance"), balance,
+        createText("Reserved: " + money(wallet.reserved_balance, currency)),
+        createText("Total withdrawn: " + money(wallet.total_withdrawn, currency)));
     }
 
-    const balance = createText(
-      money(wallet.available_balance, currency)
-    );
-    balance.className = "scf-wallet-balance";
-
-    walletContent.append(
-      createText("Available balance"),
-      balance,
-      createText(
-        "Reserved: " + money(wallet.reserved_balance, currency)
-      ),
-      createText(
-        "Total withdrawn: " + money(wallet.total_withdrawn, currency)
-      )
-    );
-  }
-
-  // ---------------- REFERRALS ----------------
-
-  referralsContent.replaceChildren();
-
-  if (referralsResult.error) {
-    setMessage(
-      referralsContent,
-      "Referral records could not be loaded. Check the referrals SELECT policy."
-    );
-    console.error("Referrals:", referralsResult.error);
-
-    if ($("refCount")) {
-      $("refCount").textContent = "Unavailable";
-    }
-
-    if ($("circleFeed")) {
-      $("circleFeed").textContent =
-        "Referral activity is temporarily unavailable.";
-    }
-  } else {
-    const allReferrals = referralsResult.data || [];
-
-    // Cancelled referrals are excluded from the registration count.
-    const validReferrals = allReferrals.filter(
-      referral => referral.status !== "cancelled"
-    );
-
-    const referralCount = validReferrals.length;
-
-    if ($("refCount")) {
-      $("refCount").textContent = String(referralCount);
-    }
-
-    const countText = createText(
-      "Registered referrals: " + referralCount
-    );
-    countText.style.fontWeight = "700";
-
-    const milestoneTitle = createText(
-      "Three-invite milestone"
-    );
-    milestoneTitle.style.fontWeight = "700";
-
-    const progress = Math.min(referralCount, 3);
-
-    const progressText = createText(
-      `${progress} of 3 referrals recorded`
-    );
-
-    const progressTrack = document.createElement("div");
-    progressTrack.style.cssText =
-      "height:9px;background:var(--line);border-radius:99px;overflow:hidden;margin:8px 0 14px;";
-
-    const progressBar = document.createElement("div");
-    progressBar.style.cssText =
-      `height:100%;width:${(progress / 3) * 100}%;background:var(--accent,#16834a);border-radius:99px;transition:width .3s ease;`;
-
-    progressTrack.appendChild(progressBar);
-
-    const milestoneMessage = createText(
-      referralCount >= 3
-        ? "Three or more referrals are recorded. Any bonus or milestone reward remains subject to SCF verification and approval."
-        : `Record ${3 - referralCount} more referral${3 - referralCount === 1 ? "" : "s"} to reach the three-invite milestone.`
-    );
-
-    referralsContent.append(
-      countText,
-      milestoneTitle,
-      progressText,
-      progressTrack,
-      milestoneMessage
-    );
-
-    // Display recent referral records and their actual database statuses.
-    const recentTitle = document.createElement("h4");
-    recentTitle.textContent = "Recent referral activity";
-    recentTitle.style.marginTop = "18px";
-    referralsContent.appendChild(recentTitle);
-
-    const recentReferrals = validReferrals.slice(0, 5);
-
-    if (!recentReferrals.length) {
-      referralsContent.appendChild(
-        createText(
-          "No referrals recorded yet. Share your personal SCF invite link to get started."
-        )
-      );
-    } else {
-      recentReferrals.forEach(referral => {
-        const item = document.createElement("article");
-        item.style.cssText =
-          "padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
-
-        const status = document.createElement("strong");
-        status.textContent =
-          "Status: " + String(referral.status || "unknown");
-
-        const date = createText(
-          referral.created_at
-            ? "Registered: " +
-                new Date(referral.created_at).toLocaleString()
-            : "Registration date unavailable"
-        );
-
-        item.append(status, date);
-
-        if (referral.eligible_at) {
-          item.appendChild(
-            createText(
-              "Eligible date: " +
-              new Date(referral.eligible_at).toLocaleString()
-            )
-          );
-        }
-
-        if (referral.rewarded_at) {
-          item.appendChild(
-            createText(
-              "Reward recorded: " +
-              new Date(referral.rewarded_at).toLocaleString()
-            )
-          );
-        }
-
-        referralsContent.appendChild(item);
-      });
-    }
-
-    // Update the existing circle feed on the main dashboard.
-    const circleFeed = $("circleFeed");
-
-    if (circleFeed) {
-      circleFeed.replaceChildren();
-
-      const heading = document.createElement("strong");
-      heading.textContent = "SCF Circle Progress";
-
-      const summary = createText(
-        `${referralCount} referral${referralCount === 1 ? "" : "s"} recorded.`
-      );
-
-      const milestone = createText(
-        referralCount >= 3
-          ? "Three-invite milestone reached; reward eligibility requires verification."
-          : `${3 - referralCount} more referral${3 - referralCount === 1 ? "" : "s"} to reach the three-invite milestone.`
-      );
-
-      circleFeed.append(heading, summary, milestone);
-    }
-  }
-
-  // ---------------- TASKS ----------------
-
-  tasksContent.replaceChildren();
-
-  if (tasksResult.error) {
-    setMessage(
-      tasksContent,
-      "Tasks unavailable. Check the tasks SELECT policy."
-    );
-    console.error("Tasks:", tasksResult.error);
-  } else if (!tasksResult.data?.length) {
-    setMessage(tasksContent, "No active tasks available.");
-  } else {
-    tasksResult.data.forEach(task => {
+    tasksContent.replaceChildren();
+    if (tasksResult.error) {
+      setMessage(tasksContent, "Tasks unavailable. Check the tasks SELECT policy.");
+      console.error("Tasks:", tasksResult.error);
+    } else if (!tasksResult.data?.length) setMessage(tasksContent, "No active tasks available.");
+    else tasksResult.data.forEach(task => {
       const article = document.createElement("article");
-      article.style.cssText =
-        "padding:13px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;";
-
-      const title = document.createElement("h4");
-      title.textContent = task.title;
-
-      article.append(
-        title,
-        createText(task.description || "No description provided."),
+      article.style.cssText = "padding:13px;margin-bottom:12px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;";
+      const title = document.createElement("h4"); title.textContent = task.title;
+      article.append(title, createText(task.description || "No description provided."),
         createText(`${Number(task.reward_points || 0)} points`),
         createText("Cash reward: " + money(task.reward_kes || 0, "KES")),
-        createText(
-          task.requires_review
-            ? "Completion requires administrator review."
-            : "Completion rules are not configured."
-        ),
-        createText("Task completion is not enabled yet.")
-      );
-
+        createText(task.requires_review ? "Completion requires administrator review." : "Completion rules are not configured."),
+        createText("Task completion is not enabled yet."));
       tasksContent.appendChild(article);
     });
-  }
 
-  // ---------------- WITHDRAWALS ----------------
-
-  withdrawalsContent.replaceChildren();
-
-  if (withdrawalsResult.error) {
-    setMessage(
-      withdrawalsContent,
-      "Withdrawal history unavailable. Check its SELECT policy."
-    );
-    console.error("Withdrawals:", withdrawalsResult.error);
-  } else if (!withdrawalsResult.data?.length) {
-    setMessage(withdrawalsContent, "You have no withdrawal requests yet.");
-  } else {
-    withdrawalsResult.data.forEach(request => {
+    withdrawalsContent.replaceChildren();
+    if (withdrawalsResult.error) {
+      setMessage(withdrawalsContent, "Withdrawal history unavailable. Check its SELECT policy.");
+      console.error("Withdrawals:", withdrawalsResult.error);
+    } else if (!withdrawalsResult.data?.length) setMessage(withdrawalsContent, "You have no withdrawal requests yet.");
+    else withdrawalsResult.data.forEach(request => {
       const item = document.createElement("article");
-      item.style.cssText =
-        "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
-
-      const amount = document.createElement("strong");
-      amount.textContent = money(
-        request.amount,
-        request.currency || "KES"
-      );
-
-      item.append(
-        amount,
-        createText("Status: " + (request.status || "unknown")),
-        createText(
-          request.created_at
-            ? "Requested: " + new Date(request.created_at).toLocaleString()
-            : "Request date unavailable"
-        )
-      );
-
-      if (request.admin_note) {
-        item.appendChild(
-          createText("Admin note: " + request.admin_note)
-        );
-      }
-
-      withdrawalsContent.appendChild(item);
-    });
-  }
-  }
-    
-  async function logout() {
-    try {
-      requireDatabase();
-      const { error } = await db.auth.signOut();
-      if (error) throw error;
-      currentUser = null; currentProfile = null; dashboardRequest++;
-      if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
-      if (insightTimer) { clearInterval(insightTimer); insightTimer = null; }
-      showView("authView"); switchMode("login");
-      notice("You have been logged out.", "success");
-    } catch (error) { showError(error); }
-  }
-
-  async function copyReferral() {
-    const code = currentProfile?.referral_code;
-    if (!code) { notice("Your referral code has not been assigned yet.", "error"); return; }
-    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
-    try {
-      await navigator.clipboard.writeText(link);
-      notice("Your invite link has been copied.", "success");
-    } catch (error) {
-      console.error("Copy link:", error);
-      notice("Copy is unavailable in this browser. Share this link: " + link);
-    }
-  }
-
-  function shareInvite() {
-    const code = currentProfile?.referral_code;
-    if (!code) { notice("Your referral code has not been assigned yet.", "error"); return; }
-    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
-    const message = `Join SCF Africa Connect — Connect, Grow, Learn and Earn: ${link}`;
-    if (navigator.share) {
-      navigator.share({ title: "SCF Africa Connect", text: message, url: link }).catch(error => {
-        if (error?.name !== "AbortError") notice(message);
-      });
-    } else copyReferral();
-  }
-
-  function contactSupport() {
-    const subject = encodeURIComponent("SCF Africa Connect support");
-    const body = encodeURIComponent("Hello SCF Support,\n\nI need help with my account.\n\n" + `Account email: ${currentUser?.email || ""}\n`);
-    location.href = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
-  }
-
-  function applyTheme() {
-    try {
-      let started = Number(localStorage.getItem(THEME_KEY));
-      if (!Number.isFinite(started) || started <= 0) {
-        started = Date.now(); localStorage.setItem(THEME_KEY, String(started));
-      }
-      const elapsed = Math.max(0, Date.now() - started);
-      document.documentElement.dataset.theme = THEME_ORDER[Math.floor(elapsed / THEME_INTERVAL) % THEME_ORDER.length];
-    } catch (error) {
-      console.warn("SCF theme rotation:", error);
-      document.documentElement.dataset.theme = THEME_ORDER[0];
-    }
-  }
-
-  /* ---------------- EVENT LISTENERS ---------------- */
-
-  function bindEvents() {
-    $("signupForm")?.addEventListener("submit", signup);
-    $("loginForm")?.addEventListener("submit", login);
-    $("proofForm")?.addEventListener("submit", submitProof);
-
-    document.querySelectorAll(".tab").forEach(tab => {
-      tab.addEventListener("click", () => {
-        switchMode(tab.dataset.mode);
-      });
-    });
-
-    $("payCountry")?.addEventListener("change", updatePayLink);
-    $("payLevel")?.addEventListener("change", updatePayLink);
-
-    $("checkStatus")?.addEventListener("click", refreshStatus);
-    $("checkPending")?.addEventListener("click", refreshStatus);
-
-    ["logoutActivation", "logoutPending", "dashLogout"].forEach(id => {
-      $(id)?.addEventListener("click", logout);
-    });
-
-    $("copyReferral")?.addEventListener("click", copyReferral);
-
-    $("shareInvite")?.addEventListener("click", shareInvite);
-
-    $("showSupport")?.addEventListener("click", contactSupport);
-
-    $("resetPassword")?.addEventListener("click", resetPassword);
-  }
-
-  /* ---------------- STARTUP ---------------- */
-
-  async function startApp() {
-    const year = $("year");
-    if (year) year.textContent = new Date().getFullYear();
-
-    updatePayLink();
-    applyTheme();
-    bindEvents();
-
-    if (!db) {
-      notice("Supabase did not load. Please refresh the page.", "error");
-      return;
-    }
-
-    try {
-      const { data, error } = await db.auth.getSession();
-      if (error) throw error;
-
-      await routeUser(data.session?.user || null);
-
-      if (!authListenerRegistered) {
-        authListenerRegistered = true;
-
-        db.auth.onAuthStateChange((_event, session) => {
-          setTimeout(() => {
-            routeUser(session?.user || null);
-          }, 0);
-        });
-      }
-    } catch (error) {
-      showError(error);
-    }
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", startApp, { once: true });
-  } else {
-    startApp();
-  }
-})();
+      item.style.cssText = "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
+      c
