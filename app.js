@@ -61,18 +61,20 @@ let authListenerRegistered = false;
     clearNotice();
   }
   function setBusy(button, state) {
+  // Support calls such as setBusy(true) and setBusy(false).
   if (typeof button === "boolean") {
     state = button;
-    button = document.querySelector(
-      '#activationForm button[type="submit"], #signupForm button[type="submit"], #loginForm button[type="submit"]'
-    );
+    button = null;
   }
 
-  if (button && typeof button === "object" && "disabled" in button) {
-    button.disabled = Boolean(state);
-    button.setAttribute("aria-busy", state ? "true" : "false");
+  // If no button was supplied, do not try to disable anything.
+  if (!button || typeof button !== "object") return;
+
+  if (!("disabled" in button)) return;
+
+  button.disabled = Boolean(state);
+  button.setAttribute("aria-busy", state ? "true" : "false");
   }
-  
   function phoneClean(value) { return String(value || "").trim().replace(/[()\s-]/g, ""); }
   function getReferral() { return (new URLSearchParams(location.search).get("ref") || "").trim().toUpperCase(); }
   function money(value, currency = "KES") {
