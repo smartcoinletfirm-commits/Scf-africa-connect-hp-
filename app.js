@@ -369,7 +369,8 @@ if (error) throw error;
       "verificationMessage",
       "Your FBK reference has been submitted and is awaiting administrator review."
     );
-
+document.querySelector("#verificationView").hidden = true;
+document.querySelector("#pendingView").hidden = false;
   } catch (error) {
   console.error("FBK submission error:", error);
   notice(
