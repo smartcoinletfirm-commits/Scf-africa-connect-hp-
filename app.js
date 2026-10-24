@@ -328,7 +328,7 @@ if (error) throw error;
   } finally {
     setBusy(false);
   }
-  }
+  
    
 
   async function verifyActivationCode(event) {
