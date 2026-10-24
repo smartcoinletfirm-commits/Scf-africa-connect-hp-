@@ -377,17 +377,11 @@ if (!pendingView) {
   );
 }
 
-// Hide the verification view.
-const verificationView = document.getElementById("verificationView");
-
 if (verificationView) {
   verificationView.classList.add("hidden");
-  verificationView.hidden = true;
 }
 
-// Display the pending view.
 pendingView.classList.remove("hidden");
-pendingView.hidden = false;
 pendingView.style.display = "block";
 
 pendingView.scrollIntoView({
