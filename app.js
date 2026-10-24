@@ -363,14 +363,38 @@ if (error) throw error;
     if (error) throw error;
 
     input.value = "";
-    notice("Your FBK reference has been submitted successfully.", "success");
 
-    setMessage(
-      "verificationMessage",
-      "Your FBK reference has been submitted and is awaiting administrator review."
-    );
-document.querySelector("#verificationView").hidden = true;
-document.querySelector("#pendingView").hidden = false;
+setMessage(
+  "verificationMessage",
+  "Your FBK reference has been submitted and is awaiting administrator review."
+);
+
+const verificationView = document.querySelector("#verificationView");
+const pendingView = document.querySelector("#pendingView");
+
+if (!pendingView) {
+  throw new Error(
+    "Awaiting Approval page (#pendingView) was not found in index.html."
+  );
+}
+
+// Hide the verification page and reveal the pending page.
+if (verificationView) {
+  verificationView.hidden = true;
+  verificationView.style.display = "none";
+}
+
+pendingView.hidden = false;
+pendingView.style.display = "";
+
+// Use the existing app router to refresh the user's access state.
+if (typeof routeUser === "function" && currentUser) {
+  await routeUser(currentUser);
+}
+
+pendingView.hidden = false;
+pendingView.style.display = "";
+pendingView.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
   console.error("FBK submission error:", error);
   notice(
