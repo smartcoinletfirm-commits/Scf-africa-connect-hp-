@@ -718,5 +718,165 @@ pendingView.scrollIntoView({
       console.error("Withdrawals:", withdrawalsResult.error);
     } else if (!withdrawalsResult.data?.length) setMessage(withdrawalsContent, "You have no withdrawal requests yet.");
     else withdrawalsResult.data.forEach(request => {
-      const item = document.createElement("article"); item.className = "sale-request-item";
-      const heading = document.createElement("strong"); heading.textContent = `${r.full_name || "Member"} · Level ${r.account_lev
+      const item = document.createElement("article");
+      item.style.cssText = "padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere;";
+      const amount = document.createElement("strong");
+      amount.textContent = money(request.amount, request.currency || "KES");
+      item.append(amount, createText("Status: " + (request.status || "unknown")),
+        createText(request.created_at ? "Requested: " + new Date(request.created_at).toLocaleString() : "Request date unavailable"));
+      if (request.admin_note) item.appendChild(createText("Admin note: " + request.admin_note));
+      withdrawalsContent.appendChild(item);
+    });
+  }
+
+  async function logout() {
+    try {
+      requireDatabase();
+      const { error } = await db.auth.signOut();
+      if (error) throw error;
+      currentUser = null; currentProfile = null; dashboardRequest++;
+      if (reviewTimer) { clearInterval(reviewTimer); reviewTimer = null; }
+      if (insightTimer) { clearInterval(insightTimer); insightTimer = null; }
+      showView("authView"); switchMode("login");
+      notice("You have been logged out.", "success");
+    } catch (error) { showError(error); }
+  }
+
+  async function copyReferral() {
+    const code = currentProfile?.referral_code;
+    if (!code) { notice("Your referral code has not been assigned yet.", "error"); return; }
+    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      notice("Your invite link has been copied.", "success");
+    } catch (error) {
+      console.error("Copy link:", error);
+      notice("Copy is unavailable in this browser. Share this link: " + link);
+    }
+  }
+
+  function shareInvite() {
+    const code = currentProfile?.referral_code;
+    if (!code) { notice("Your referral code has not been assigned yet.", "error"); return; }
+    const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(code)}`;
+    const message = `Join ${BRAND_NAME} — Learn, Write, Research and Grow: ${link}`;
+    if (navigator.share) {
+      navigator.share({ title: BRAND_NAME, text: message, url: link }).catch(error => {
+        if (error?.name !== "AbortError") notice(message);
+      });
+    } else copyReferral();
+  }
+
+  function contactSupport() {
+    const subject = encodeURIComponent(`${BRAND_NAME} support`);
+    const body = encodeURIComponent("Hello Scholarbrige Support,\n\nI need help with my account.\n\n" + `Account email: ${currentUser?.email || ""}\n`);
+    location.href = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
+  }
+
+  function applyTheme() {
+    try {
+      let started = Number(localStorage.getItem(THEME_KEY));
+      if (!Number.isFinite(started) || started <= 0) {
+        started = Date.now(); localStorage.setItem(THEME_KEY, String(started));
+      }
+      const elapsed = Math.max(0, Date.now() - started);
+      document.documentElement.dataset.theme = THEME_ORDER[Math.floor(elapsed / THEME_INTERVAL) % THEME_ORDER.length];
+    } catch (error) {
+      console.warn("SCF theme rotation:", error);
+      document.documentElement.dataset.theme = THEME_ORDER[0];
+    }
+  }
+
+  /* ---------------- EVENT LISTENERS ---------------- */
+
+  function bindEvents() {
+    $("signupForm")?.addEventListener("submit", signup);
+    $("loginForm")?.addEventListener("submit", login);
+    $("activationForm")?.addEventListener("submit", requestActivation);
+    $("sellAccountForm")?.addEventListener("submit", submitAccountSale);
+    $("sellAccountLevel")?.addEventListener("change", updateSalePrice);
+    $("refreshSaleQueue")?.addEventListener("click", () => loadAdminSaleQueue().catch(showError));
+    $("verificationForm")?.addEventListener("submit", verifyActivationCode);
+
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        switchMode(tab.dataset.mode);
+      });
+    });
+
+    $("checkVerification")?.addEventListener("click", refreshActivationStatus);
+    $("refreshActivationQueue")?.addEventListener("click", () => loadAdminActivationQueue().catch(showError));
+    $("enableActivationAlerts")?.addEventListener("click", async () => {
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          alarmAudioContext = alarmAudioContext || new AudioContextClass();
+          if (alarmAudioContext.state === "suspended") await alarmAudioContext.resume();
+          playAdminAlarm();
+        }
+        let permission = "unsupported";
+        if ("Notification" in window) permission = await Notification.requestPermission();
+        notice("Loud admin alarm enabled while this dashboard is open. New requests and position-number submissions trigger an alarm.", "success");
+      } catch (error) { notice("The browser blocked sound or notifications. Allow site sound/notifications and try again.", "error"); }
+    });
+    $("logoutVerification")?.addEventListener("click", logout);
+
+    $("checkStatus")?.addEventListener("click", refreshStatus);
+    $("checkPending")?.addEventListener("click", refreshStatus);
+
+    ["logoutActivation", "logoutPending", "dashLogout"].forEach(id => {
+      $(id)?.addEventListener("click", logout);
+    });
+
+    $("copyReferral")?.addEventListener("click", copyReferral);
+
+    $("shareInvite")?.addEventListener("click", shareInvite);
+
+    $("showSupport")?.addEventListener("click", contactSupport);
+
+    $("resetPassword")?.addEventListener("click", resetPassword);
+  }
+
+  /* ---------------- STARTUP ---------------- */
+
+  async function startApp() {
+    const year = $("year");
+    if (year) year.textContent = new Date().getFullYear();
+
+    applyTheme();
+    updateCosmicDayNight();
+    window.setInterval(updateCosmicDayNight, 60000);
+    bindEvents();
+
+    if (!db) {
+      notice("Supabase did not load. Please refresh the page.", "error");
+      return;
+    }
+
+    try {
+      const { data, error } = await db.auth.getSession();
+      if (error) throw error;
+
+      await routeUser(data.session?.user || null);
+
+      if (!authListenerRegistered) {
+        authListenerRegistered = true;
+
+        db.auth.onAuthStateChange((_event, session) => {
+          setTimeout(() => {
+            routeUser(session?.user || null);
+          }, 0);
+        });
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startApp, { once: true });
+  } else {
+    startApp();
+  }
+})();
+
