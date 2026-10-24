@@ -377,17 +377,18 @@ if (!pendingView) {
   );
 }
 
-if (verificationView) {
-  verificationView.classList.add("hidden");
-}
+// Hide verification and show Awaiting review.
+  if (verificationView) {
+    verificationView.classList.add("hidden");
+  }
 
-pendingView.classList.remove("hidden");
-pendingView.style.display = "block";
+  pendingView.classList.remove("hidden");
+  pendingView.style.display = "block";
 
-pendingView.scrollIntoView({
-  behavior: "smooth",
-  block: "start"
-});
+  pendingView.scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
   } catch (error) {
   console.error("FBK submission error:", error);
   notice(
