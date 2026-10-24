@@ -369,26 +369,27 @@ setMessage(
   "Your FBK reference has been submitted and is awaiting administrator review."
 );
 
-const verificationView = document.querySelector("#verificationView");
-const pendingView = document.querySelector("#pendingView");
+const pendingView = document.getElementById("pendingView");
 
 if (!pendingView) {
   throw new Error(
-    "Awaiting Approval page (#pendingView) was not found in index.html."
+    "Awaiting Approval view was not found. Check index.html for its ID."
   );
 }
 
-// Hide the verification page and reveal the pending page.
+// Hide the verification view.
+const verificationView = document.getElementById("verificationView");
+
 if (verificationView) {
+  verificationView.classList.add("hidden");
   verificationView.hidden = true;
-  verificationView.style.display = "none";
 }
 
+// Display the pending view.
+pendingView.classList.remove("hidden");
 pendingView.hidden = false;
-pendingView.style.display = "";
+pendingView.style.display = "block";
 
-pendingView.hidden = false;
-pendingView.style.display = "";
 pendingView.scrollIntoView({
   behavior: "smooth",
   block: "start"
