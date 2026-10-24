@@ -245,7 +245,7 @@ let authListenerRegistered = false;
       
         options: { data: { full_name: fullName, phone, country, education_level: education, age_confirmed: true, referral_code: referral || null } }
       });
-      if (error) throw error;
+      
       if (error) throw error;
 
 if (data.user) {
@@ -364,31 +364,39 @@ if (error) throw error;
 
     input.value = "";
 
-setMessage(
-  "verificationMessage",
-  "Your FBK reference has been submitted and is awaiting administrator review."
-);
-
+const verificationView = document.getElementById("verificationView");
 const pendingView = document.getElementById("pendingView");
 
 if (!pendingView) {
-  throw new Error(
-    "Awaiting Approval view was not found. Check index.html for its ID."
-  );
+  throw new Error("Awaiting review page not found.");
 }
 
-// Hide verification and show Awaiting review.
-  if (verificationView) {
-    verificationView.classList.add("hidden");
-  }
+if (verificationView) {
+  verificationView.classList.add("hidden");
+}
 
-  pendingView.classList.remove("hidden");
-  pendingView.style.display = "block";
+pendingView.classList.remove("hidden");
+pendingView.style.display = "block";
 
-  pendingView.scrollIntoView({
-    behavior: "smooth",
-    block: "start"
-  });
+const reviewStart = Date.now();
+localStorage.setItem(
+  REVIEW_KEY_PREFIX + currentUser.id,
+  String(reviewStart)
+);
+
+if (typeof startReviewCountdown === "function") {
+  startReviewCountdown(reviewStart);
+}
+
+if ($("pendingLabel")) {
+  $("pendingLabel").textContent =
+    "Your FBK reference has been submitted. Your account is awaiting review.";
+}
+
+pendingView.scrollIntoView({
+  behavior: "smooth",
+  block: "start"
+});
   } catch (error) {
   console.error("FBK submission error:", error);
   notice(
