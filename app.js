@@ -387,14 +387,12 @@ if (verificationView) {
 pendingView.hidden = false;
 pendingView.style.display = "";
 
-// Use the existing app router to refresh the user's access state.
-if (typeof routeUser === "function" && currentUser) {
-  await routeUser(currentUser);
-}
-
 pendingView.hidden = false;
 pendingView.style.display = "";
-pendingView.scrollIntoView({ behavior: "smooth", block: "start" });
+pendingView.scrollIntoView({
+  behavior: "smooth",
+  block: "start"
+});
   } catch (error) {
   console.error("FBK submission error:", error);
   notice(
